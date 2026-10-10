@@ -20,7 +20,8 @@ interface IPASoftIspInterface {
 	     libcamera.ControlInfoMap sensorControls)
 		=> (int32 ret,
 		    libcamera.ControlInfoMap ipaControls,
-		    bool ccmEnabled, bool lscEnabled);
+		    bool ccmEnabled, bool lscEnabled,
+		    libcamera.SizeRange sizeLimits);
 	start() => (int32 ret);
 	stop();
 	configure(IPAConfigInfo configInfo)

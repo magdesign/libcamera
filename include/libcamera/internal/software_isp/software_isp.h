@@ -102,6 +102,7 @@ private:
 	DmaBufAllocator dmaHeap_;
 	bool ccmEnabled_;
 	bool lscEnabled_;
+	SizeRange outputSizeLimits_;
 
 	std::unique_ptr<ipa::softisp::IPAProxySoftIsp> ipa_;
 	std::deque<FrameBuffer *> queuedInputBuffers_;

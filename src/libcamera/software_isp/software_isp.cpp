@@ -164,7 +164,8 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
 			 sensor->controls(),
 			 ipaControls,
 			 &ccmEnabled_,
-			 &lscEnabled_);
+			 &lscEnabled_,
+			 &outputSizeLimits_);
 	if (ret) {
 		LOG(SoftwareIsp, Error) << "IPA init failed";
 		debayer_.reset();
@@ -244,7 +245,10 @@ SizeRange SoftwareIsp::sizes(PixelFormat inputFormat, const Size &inputSize)
 {
 	ASSERT(debayer_);
 
-	return debayer_->sizes(inputFormat, inputSize);
+	SizeRange sizes = debayer_->sizes(inputFormat, inputSize);
+	sizes.min = sizes.min.expandTo(outputSizeLimits_.min).alignUpTo(sizes.hStep, sizes.vStep);
+	sizes.max = sizes.max.boundTo(outputSizeLimits_.max).alignDownTo(sizes.hStep, sizes.vStep);
+	return sizes;
 }
 
 /**

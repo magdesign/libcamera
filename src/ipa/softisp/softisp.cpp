@@ -59,7 +59,8 @@ public:
 		 const ControlInfoMap &sensorControls,
 		 ControlInfoMap *ipaControls,
 		 bool *ccmEnabled,
-		 bool *lscEnabled) override;
+		 bool *lscEnabled,
+		 SizeRange *sizeLimits) override;
 	int configure(const IPAConfigInfo &configInfo,
 		      ControlInfoMap *ipaControls) override;
 
@@ -99,7 +100,8 @@ int IPASoftIsp::init(const IPASettings &settings,
 		     const ControlInfoMap &sensorControls,
 		     ControlInfoMap *ipaControls,
 		     bool *ccmEnabled,
-		     bool *lscEnabled)
+		     bool *lscEnabled,
+		     SizeRange *sizeLimits)
 {
 	context_.camHelper = CameraSensorHelperFactoryBase::create(settings.sensorModel);
 	if (!context_.camHelper) {
@@ -185,6 +187,22 @@ int IPASoftIsp::init(const IPASettings &settings,
 
 	ControlInfoMap::Map ctrlMap = context_.ctrlMap;
 	*ipaControls = ControlInfoMap(std::move(ctrlMap), controls::controls);
+
+	sizeLimits->min = Size(0, 0);
+	sizeLimits->max = Size(std::numeric_limits<uint32_t>::max(),
+			       std::numeric_limits<uint32_t>::max());
+	if (data->contains("options")) {
+		const ValueNode *options = &(*data)["options"];
+
+		if (options->contains("min_output_width"))
+			sizeLimits->min.width = (*options)["min_output_width"].get<uint32_t>(0);
+		if (options->contains("min_output_heigth"))
+			sizeLimits->min.height = (*options)["min_output_heigth"].get<uint32_t>(0);
+		if (options->contains("max_output_width"))
+			sizeLimits->max.width = (*options)["max_output_width"].get<uint32_t>(0);
+		if (options->contains("max_output_heigth"))
+			sizeLimits->max.height = (*options)["max_output_heigth"].get<uint32_t>(0);
+	}
 
 	return 0;
 }
