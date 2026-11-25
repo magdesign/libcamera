@@ -1,3 +1,4 @@
+
 pkgname=libcamera
 pkgver=9999999
 pkgrel=0
@@ -5,6 +6,7 @@ pkgdesc="Linux camera framework"
 url="https://libcamera.org/"
 arch="all"
 license="LGPL-2.1-or-later AND GPL-2.0-or-later"
+
 depends_dev="
 	eudev-dev
 	glib-dev
@@ -31,6 +33,7 @@ makedepends="$depends_dev
 	qt6-qttools-dev
 	yaml-dev
 	"
+
 subpackages="
 	$pkgname-dbg
 	$pkgname-dev
@@ -39,28 +42,32 @@ subpackages="
 	$pkgname-v4l2
 	$pkgname-tools
 	"
-source=""
 
-builddir="$srcdir/$pkgname-v$_pkgver"
+# Your fork, not upstream
+source="$pkgname::git+https://github.com/magdesign/libcamera.git#branch=main"
+
+builddir="$srcdir/$pkgname"
+
 # gstreamer tests fail
-# manual strip because ipa .sign files depend on the file contents- have to re-sign after strip
+# manual strip because ipa .sign files depend on file contents
+# have to re-sign after strip
 options="!strip !check"
 
 case "$CARCH" in
-arm*|aarch64)
-	subpackages="$subpackages $pkgname-raspberrypi"
-	;;
+	arm*|aarch64)
+		subpackages="$subpackages $pkgname-raspberrypi"
+		;;
 esac
 
 case "$CARCH" in
-ppc64le|s390x|riscv64|loongarch64)
-	# doesn't install any ipa
-	;;
-*)
-    # WIP: HACK? Don't depend on this this shit
-	# depends="$pkgname-ipa=$pkgver-r$pkgrel"
-	subpackages="$subpackages $pkgname-ipa"
-	;;
+	ppc64le|s390x|riscv64|loongarch64)
+		# doesn't install any ipa
+		;;
+	*)
+		# WIP: HACK? Don't depend on this
+		# depends="$pkgname-ipa=$pkgver-r$pkgrel"
+		subpackages="$subpackages $pkgname-ipa"
+		;;
 esac
 
 build() {
@@ -70,13 +77,14 @@ build() {
 		-Dwerror=false \
 		-Ddocumentation=disabled \
 		. output
+
 	meson compile -C output
 }
 
 package() {
 	DESTDIR="$pkgdir" meson install --no-rebuild -C output
 
-	# manual strip first..
+	# Manual strip first
 	scanelf --recursive \
 		--nobanner \
 		--etype "ET_DYN,ET_EXEC" \
@@ -84,13 +92,14 @@ package() {
 		"$pkgdir" \
 		| while read -r file; do
 			strip "$file"
-	done
+		done
 }
 
 ipa() {
 	depends=""
 	amove usr/lib/libcamera
-	# then sign ipa's
+
+	# Sign IPA files
 	local ipa
 	for ipa in "$subpkgdir"/usr/lib/libcamera/ipa/ipa*.so; do
 		msg "signing $ipa"
@@ -129,4 +138,4 @@ tools() {
 	amove usr/bin/lc-compliance
 }
 
-sha512sums=""
+sha512sums="SKIP"
