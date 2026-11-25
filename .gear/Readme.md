@@ -1,1 +1,0 @@
-# Part of ALT Linux package
