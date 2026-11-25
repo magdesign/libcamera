@@ -1,0 +1,23 @@
+#!/bin/bash
+
+SPEC_FILE="package/altlinux/libcamera.spec"
+
+echo Adding nightly suffix into release
+NIGHTLY_SUFFIX=".$(date +%Y%m%d.%s)"
+echo "Suffix: $NIGHTLY_SUFFIX"
+VERSION=$(awk '/^Version:/ {print $2; exit}' "$SPEC_FILE")
+echo "Version: $VERSION"
+BASE_RELEASE=$(awk '/^Release:/ {print $2; exit}' "$SPEC_FILE")
+echo "Release base: $BASE_RELEASE"
+NEW_RELEASE="${BASE_RELEASE}${NIGHTLY_SUFFIX}"
+sed -i -E "s/^(Release:[[:space:]]+)[^[:space:]]+/\1${NEW_RELEASE}/" "$SPEC_FILE"
+echo "OK, release: $NEW_RELEASE"
+
+echo "Adding changelog line with nightly version"
+CHANGELOG_DATE=$(date "+%a %b %d %Y")
+VERSION_RELEASE="${VERSION}-${NEW_RELEASE}"
+CHANGELOG_LINE="* ${CHANGELOG_DATE} $(git log -1 --format="%an") <$(git log -1 --format="%ae")> ${VERSION_RELEASE}\n- Automated nightly build for $(git log -1 --format="%H")"
+sed -i "/^%changelog$/a\\
+${CHANGELOG_LINE}\n" "$SPEC_FILE"
+
+printf  "OK, added\n%b" "${CHANGELOG_LINE}\n"

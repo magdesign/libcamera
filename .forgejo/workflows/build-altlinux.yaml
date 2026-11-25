@@ -1,0 +1,47 @@
+name: Build and upload test package
+on:
+  push:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  build_package:
+    name: Build package for ${{ matrix.arch }}
+    runs-on: als-huge # For aarch64 build
+    container:
+      image: altlinux.space/actions/runner/hasherc:sisyphus
+    strategy:
+      matrix:
+        arch:
+#          - x86_64
+          - aarch64
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Prepare RPM build
+        run: |
+          ./package/altlinux/prepare-nightly
+          git add .
+
+      - name: Build RPMs
+        uses: actions/build-rpm-action@main
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Uploading packages as CI artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: alt-packages-${{ matrix.arch }}
+          path: ~/.cache/hasherc/libcamera-neko/out/RPMS/**/*.rpm
+
+      - name: Uploading packages into nightly repo
+        if: ${{ forgejo.event_name != 'pull_request' && forgejo.ref == 'refs/heads/nekocwd/softisp-playground' }}
+        uses: actions/upload-rpm-action@main
+        with:
+          token: ${{ secrets.PACKAGE_TOKEN }}
+          directory: ~/.cache/hasherc/libcamera-neko/out/RPMS
+          group: libcamera

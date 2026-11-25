@@ -1,0 +1,15 @@
+name: Sync fork with upstream
+run-name: Sync fork with upstream
+on:
+  schedule:
+    - cron: "@daily"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Sync
+    uses: actions/sync-with-mirror/.forgejo/workflows/sync.yaml@main
+    secrets: inherit
+    with:
+      name: libcamera
+      branch: master

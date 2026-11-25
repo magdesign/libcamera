@@ -1,0 +1,116 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/*
+ * Copyright (C) 2024-2026 Red Hat, Inc.
+ *
+ * Simple pipeline IPA Context
+ */
+
+#pragma once
+
+#include <array>
+#include <optional>
+#include <stdint.h>
+
+#include <libcamera/controls.h>
+
+#include "libcamera/internal/matrix.h"
+#include "libcamera/internal/vector.h"
+
+#include <libipa/awb.h>
+#include <libipa/ccm.h>
+#include <libipa/fc_queue.h>
+
+#include "core_ipa_interface.h"
+
+namespace libcamera {
+
+namespace ipa::soft {
+
+struct IPASessionConfiguration {
+	struct {
+		int32_t exposureMin, exposureMax;
+		double againMin, againMax, again10, againMinStep;
+		utils::Duration lineDuration;
+	} agc;
+	struct {
+		std::optional<uint8_t> level;
+	} black;
+	struct {
+		int32_t focus_min, focus_max;
+		double focus_max_pos;
+		uint64_t sharpness_max;
+		double start, stop, step;
+	} focus;
+};
+
+struct IPAActiveState {
+	ipa::awb::ActiveState awb;
+	ipa::ccm::ActiveState ccm;
+
+	struct {
+		int32_t exposure;
+		double again;
+		bool valid;
+	} agc;
+
+	struct {
+		uint8_t level;
+		int32_t lastExposure;
+		double lastGain;
+	} blc;
+
+	Matrix<float, 3, 3> combinedMatrix;
+
+	struct {
+		float gamma;
+		/* 0..2 range, 1.0 = normal */
+		std::optional<float> contrast;
+		std::optional<float> saturation;
+		/* 0..2 range, 1.0 = normal */
+		std::optional<double> brightness;
+		/* 0..1 range, 1 = normal */
+		std::optional<bool> ae_enabled;
+		/* 0..1 range, 0.5 = normal */
+		std::optional<double> exposure_value;
+		/* 0..100 range, 50.0 = normal */
+		std::optional<double> focus_pos;
+		/* 0..1 range, 0 = normal */
+		std::optional<bool> focus_sweep;
+	} knobs;
+};
+
+struct IPAFrameContext : public FrameContext {
+	ipa::awb::FrameContext awb;
+	ipa::ccm::FrameContext ccm;
+
+	struct {
+		int32_t exposure;
+		double gain;
+	} sensor;
+
+	float gamma;
+	std::optional<float> contrast;
+	std::optional<float> saturation;
+
+	struct {
+		int32_t focus_pos;
+	} lens;
+};
+
+struct IPAContext {
+	IPAContext(unsigned int frameContextSize)
+		: frameContexts(frameContextSize)
+	{
+	}
+
+	IPACameraSensorInfo sensorInfo;
+	IPASessionConfiguration configuration;
+	IPAActiveState activeState;
+	FCQueue<IPAFrameContext> frameContexts;
+	ControlInfoMap::Map ctrlMap;
+	bool ccmEnabled = false;
+};
+
+} /* namespace ipa::soft */
+
+} /* namespace libcamera */
