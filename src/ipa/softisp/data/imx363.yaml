@@ -103,7 +103,7 @@ algorithms:
   - Adjust:
   - Agc:
   - Af:
-      scanRange: [ 1000, 3200 ]
-      coarseStep: 160
-      fineStep: 40
+      scanRange: [ 1000, 4095 ]
+      coarseStep: 220
+      fineStep: 55
 ...
