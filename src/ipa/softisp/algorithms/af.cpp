@@ -36,6 +36,12 @@ namespace ipa::softisp::algorithms {
  * a new scan starts when it drops for a few statistics frames in a row (the
  * subject or the scene has changed).
  *
+ * An AfTrigger start while focused first probes the current position and one
+ * coarse step on either side. If the current position is the sharpest of the
+ * three, focus is confirmed after three statistics frames; otherwise a full
+ * scan follows. This keeps the shutter lag short when focus is already good
+ * while still catching a subject change the monitoring has not noticed.
+ *
  * Tuning parameters (all optional):
  * - map: piecewise linear function from dioptres to lens driver positions,
  *   used for the LensPosition control and metadata
@@ -62,7 +68,7 @@ Af::Af()
 	  dropRatio_(0.75), dropFrames_(3), hasLens_(false), lensMin_(0),
 	  lensMax_(0), mode_(controls::AfModeContinuous), phase_(Phase::Idle),
 	  afState_(controls::AfStateIdle), position_(0), scanPos_(0),
-	  scanEnd_(0), scanStep_(0), bestPos_(0), bestScore_(0.0),
+	  scanEnd_(0), scanStep_(0), probeIndex_(0), bestPos_(0), bestScore_(0.0),
 	  focusedScore_(0.0), focusedLuma_(0.0), dropCount_(0), stableCount_(0),
 	  triggered_(false)
 {
@@ -188,6 +194,49 @@ void Af::startScan()
 	triggered_ = true;
 }
 
+void Af::startProbe()
+{
+	phase_ = Phase::Probe;
+	afState_ = controls::AfStateScanning;
+	probePositions_ = { position_,
+			    std::max(position_ - coarseStep_, scanMin_),
+			    std::min(position_ + coarseStep_, scanMax_) };
+	probeIndex_ = 0;
+	scores_.clear();
+	triggered_ = true;
+}
+
+void Af::probeStep(IPAContext &context, double contrast)
+{
+	scores_[position_] = contrast;
+
+	if (++probeIndex_ < probePositions_.size()) {
+		moveTo(context, probePositions_[probeIndex_]);
+		return;
+	}
+
+	const int32_t centre = probePositions_[0];
+	const double centreScore = scores_[centre];
+	bool sharpest = true;
+	for (const auto &[pos, score] : scores_)
+		sharpest &= score <= centreScore;
+
+	if (sharpest) {
+		LOG(IPASoftIspAf, Debug)
+			<< "Probe confirms focus at " << centre;
+		phase_ = Phase::Focused;
+		afState_ = controls::AfStateFocused;
+		focusedScore_ = 0.0;
+		dropCount_ = 0;
+		moveTo(context, centre);
+		return;
+	}
+
+	LOG(IPASoftIspAf, Debug) << "Probe found better focus nearby, rescanning";
+	startScan();
+	moveTo(context, scanPos_);
+}
+
 void Af::moveTo(IPAContext &context, int32_t position)
 {
 	position_ = std::clamp(position, lensMin_, lensMax_);
@@ -217,8 +266,14 @@ void Af::queueRequest(IPAContext &context,
 	const auto &trigger = controls.get(controls::AfTrigger);
 	if (trigger && mode_ != controls::AfModeManual) {
 		if (*trigger == controls::AfTriggerStart) {
-			startScan();
-			moveTo(context, scanPos_);
+			if (phase_ == Phase::Focused) {
+				startProbe();
+			} else if (phase_ != Phase::Coarse && phase_ != Phase::Fine &&
+				   phase_ != Phase::Probe) {
+				startScan();
+				moveTo(context, scanPos_);
+			}
+			/* A scan already in progress completes the trigger. */
 		} else if (*trigger == controls::AfTriggerCancel) {
 			phase_ = Phase::Idle;
 			afState_ = controls::AfStateIdle;
@@ -300,6 +355,15 @@ void Af::process(IPAContext &context,
 			if (phase_ == Phase::Coarse)
 				moveTo(context, scanPos_);
 		}
+		return;
+
+	case Phase::Probe:
+		if (triggered_) {
+			/* The first statistics predate the trigger. */
+			triggered_ = false;
+			return;
+		}
+		probeStep(context, contrast);
 		return;
 
 	case Phase::Coarse:

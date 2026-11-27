@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <stdint.h>
+#include <vector>
 
 #include <libcamera/controls.h>
 
@@ -38,12 +39,15 @@ public:
 private:
 	enum class Phase {
 		Idle,
+		Probe,
 		Coarse,
 		Fine,
 		Focused,
 	};
 
 	void startScan();
+	void startProbe();
+	void probeStep(IPAContext &context, double contrast);
 	void finishScan();
 	void moveTo(IPAContext &context, int32_t position);
 	void monitor(double contrast, double luma);
@@ -72,6 +76,8 @@ private:
 	int32_t scanEnd_;
 	int32_t scanStep_;
 	std::map<int32_t, double> scores_;
+	std::vector<int32_t> probePositions_;
+	unsigned int probeIndex_;
 	int32_t bestPos_;
 	double bestScore_;
 	double focusedScore_;
