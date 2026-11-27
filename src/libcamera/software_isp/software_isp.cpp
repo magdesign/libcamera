@@ -69,8 +69,11 @@ LOG_DEFINE_CATEGORY(SoftwareIsp)
 
 /**
  * \var SoftwareIsp::setSensorControls
- * \brief A signal emitted when the values to write to the sensor controls are
- * ready
+ * \brief A signal emitted when the values to write to the sensor and lens
+ * controls are ready
+ *
+ * The second argument holds the lens controls (V4L2_CID_FOCUS_ABSOLUTE). It is
+ * empty when the lens position does not need to change.
  */
 
 /**
@@ -456,9 +459,10 @@ void SoftwareIsp::saveIspParams([[maybe_unused]] uint32_t frame)
 	debayerParams_ = *sharedParams_;
 }
 
-void SoftwareIsp::setSensorCtrls(const ControlList &sensorControls)
+void SoftwareIsp::setSensorCtrls(const ControlList &sensorControls,
+				 const ControlList &lensControls)
 {
-	setSensorControls.emit(sensorControls);
+	setSensorControls.emit(sensorControls, lensControls);
 }
 
 void SoftwareIsp::statsReady(uint32_t frame, uint32_t bufferId)

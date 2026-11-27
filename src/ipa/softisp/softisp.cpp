@@ -83,6 +83,9 @@ private:
 
 	/* Local parameter storage */
 	struct IPAContext context_;
+
+	/* Last lens position sent to the pipeline handler */
+	std::optional<int32_t> lastLensPosition_;
 };
 
 IPASoftIsp::~IPASoftIsp()
@@ -215,6 +218,8 @@ int IPASoftIsp::init(const IPASettings &settings,
 int IPASoftIsp::configure(const IPAConfigInfo &configInfo, ControlInfoMap *ipaControls)
 {
 	context_.sensorControls = configInfo.sensorControls;
+	context_.lensControls = configInfo.lensControls;
+	lastLensPosition_.reset();
 
 	/* Clear the IPA context before the streaming session. */
 	context_.configuration = {};
@@ -279,7 +284,16 @@ void IPASoftIsp::processStats(const uint32_t frame,
 	ControlList ctrls(context_.sensorControls);
 	agc::prepareControls(ctrls, context_.camHelper.get(),
 			     frameContext.agc.exposure, frameContext.agc.gain);
-	setSensorControls.emit(ctrls);
+
+	ControlList lensCtrls(context_.lensControls);
+	const std::optional<int32_t> &lensPosition = context_.activeState.lens.position;
+	if (lensPosition && lensPosition != lastLensPosition_ &&
+	    context_.lensControls.idmap().count(V4L2_CID_FOCUS_ABSOLUTE)) {
+		lensCtrls.set(V4L2_CID_FOCUS_ABSOLUTE, *lensPosition);
+		lastLensPosition_ = lensPosition;
+	}
+
+	setSensorControls.emit(ctrls, lensCtrls);
 }
 
 std::string IPASoftIsp::logPrefix() const
