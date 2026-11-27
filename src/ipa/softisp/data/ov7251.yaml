@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: CC0-1.0
+%YAML 1.1
+---
+# ov7251: monochrome global shutter IR sensor (Xiaomi Poco F1 front IR
+# camera). No colour processing: no AWB, no CCM, no lens shading data.
+version: 1
+algorithms:
+  - BlackLevel:
+  - Adjust:
+  - Agc:
+...
