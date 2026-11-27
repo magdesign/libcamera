@@ -209,4 +209,14 @@ algorithms:
                198, 188, 172, 156, 143, 133, 125, 120, 119, 120, 124, 130, 140, 153, 166, 181, 192 ]
   - Adjust:
   - Agc:
+      AeConstraintMode:
+        Normal:
+          lower:
+            qLo: 0.98
+            qHi: 1.0
+            yTarget: 0.5
+          upper:
+            qLo: 0.98
+            qHi: 1.0
+            yTarget: 0.8
 ...

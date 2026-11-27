@@ -102,4 +102,14 @@ algorithms:
                109, 105, 101,  97,  93,  90,  88,  86,  86,  86,  88,  90,  93,  97, 101, 106, 108 ]
   - Adjust:
   - Agc:
+      AeConstraintMode:
+        Normal:
+          lower:
+            qLo: 0.98
+            qHi: 1.0
+            yTarget: 0.5
+          upper:
+            qLo: 0.98
+            qHi: 1.0
+            yTarget: 0.8
 ...

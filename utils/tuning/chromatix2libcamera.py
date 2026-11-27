@@ -330,7 +330,22 @@ def main():
                 # the platform: softisp uses UQ2.6 (gain * 64, max 3.98).
                 q = [min(255, max(0, round(x * 64))) for x in resample(t, LSC_W, LSC_H)]
                 out.append('          %s: ' % key + fmt_ints(q, 17, 13))
-    out += ['  - Adjust:', '  - Agc:']
+    out += ['  - Adjust:', '  - Agc:',
+            # Normal mode with an upper bound on the brightest 2% of the
+            # pixels, so that highlights (sky, windows) are not blown out
+            # when the mean luminance target alone would expose for the
+            # darker parts of the scene. Applications rarely select a
+            # constraint mode, so this has to be the Normal one.
+            '      AeConstraintMode:',
+            '        Normal:',
+            '          lower:',
+            '            qLo: 0.98',
+            '            qHi: 1.0',
+            '            yTarget: 0.5',
+            '          upper:',
+            '            qLo: 0.98',
+            '            qHi: 1.0',
+            '            yTarget: 0.8']
     if a.af_scan:
         lo, hi = a.af_scan.split(',')
         coarse, fine = a.af_steps.split(',')
