@@ -12,6 +12,7 @@
 #include "libcamera/internal/software_isp/swstats_cpu.h"
 
 #include <libcamera/base/log.h>
+#include <libcamera/base/utils.h>
 
 #include <libcamera/stream.h>
 
@@ -187,7 +188,12 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
 	uint64_t sumR = 0;                \
 	uint64_t sumG = 0;                \
 	uint64_t sumB = 0;                \
-	uint64_t nSamples = 0;
+	uint64_t nSamples = 0;            \
+                                          \
+	uint64_t yPrev1 = 0, yPrev2 = 0;  \
+	unsigned int sample = 0;          \
+	uint64_t sharpness = 0;           \
+	uint64_t sharpnessLuma = 0;
 
 #define SWSTATS_ACCUMULATE_LINE_STATS(div)      \
 	if (r < kSaturationThreshold * (div) && \
@@ -202,13 +208,24 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
 	yVal = r * kRedYMul;                    \
 	yVal += g * kGreenYMul;                 \
 	yVal += b * kBlueYMul;                  \
-	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++;
+	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++; \
+                                                \
+	if (afRow_ && sample >= afSampleStart_ && sample < afSampleEnd_) { \
+		if (sample >= afSampleStart_ + 2) \
+			sharpness += utils::abs_diff(yVal + yPrev2, 2 * yPrev1); \
+		sharpnessLuma += yVal;          \
+	}                                       \
+	yPrev2 = yPrev1;                        \
+	yPrev1 = yVal;                          \
+	sample++;
 
-#define SWSTATS_FINISH_LINE_STATS() \
-	stats.sum_.r() += sumR;     \
-	stats.sum_.g() += sumG;     \
-	stats.sum_.b() += sumB;     \
-	stats.numPixels_ += nSamples;
+#define SWSTATS_FINISH_LINE_STATS()        \
+	stats.sum_.r() += sumR;            \
+	stats.sum_.g() += sumG;            \
+	stats.sum_.b() += sumB;            \
+	stats.numPixels_ += nSamples;      \
+	stats.sharpness += sharpness;      \
+	stats.sharpnessLuma += sharpnessLuma;
 
 void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats)
 {
@@ -437,6 +454,8 @@ void SwStatsCpu::startFrame(uint32_t frame)
 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
 		s.numPixels_ = 0;
 		s.yHistogram.fill(0);
+		s.sharpness = 0;
+		s.sharpnessLuma = 0;
 	}
 }
 
@@ -455,9 +474,13 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
 		sharedStats_->numPixels_ = 0;
 		sharedStats_->yHistogram.fill(0);
+		sharedStats_->sharpness = 0;
+		sharedStats_->sharpnessLuma = 0;
 		for (const auto &s : stats_) {
 			sharedStats_->sum_ += s.sum_;
 			sharedStats_->numPixels_ += s.numPixels_;
+			sharedStats_->sharpness += s.sharpness;
+			sharedStats_->sharpnessLuma += s.sharpnessLuma;
 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
 				sharedStats_->yHistogram[j] += s.yHistogram[j];
 		}
@@ -629,6 +652,14 @@ void SwStatsCpu::setWindow(const Rectangle &window)
 	window_.width = (window_.width > xShift_ ? window_.width - xShift_ : 0);
 	window_.width &= ~(patternSize_.width - 1);
 	window_.height &= ~(patternSize_.height - 1);
+
+	/*
+	 * The line statistics take one sample per 4 pixels (every other 2x2
+	 * block); use the centre half of them for the autofocus sharpness.
+	 */
+	unsigned int samples = window_.width / 4;
+	afSampleStart_ = samples / 4;
+	afSampleEnd_ = samples * 3 / 4;
 }
 
 void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
@@ -648,6 +679,7 @@ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
 		/* linePointers[0] is not used by any stats0_ functions */
 		linePointers[1] = src;
 		linePointers[2] = src + stride_;
+		setAfRow(y);
 		(this->*stats0_)(linePointers, stats_[0]);
 		src += stride_ * 2;
 	}
@@ -661,6 +693,7 @@ void SwStatsCpu::processQuadBayerFrame(MappedFrameBuffer &in)
 	for (unsigned int y = 0; y + 3 < window_.height; y += 8) {
 		for (unsigned int row = 0; row < 4; ++row)
 			rows[row] = src + row * stride_ + window_.x * 5 / 4;
+		setAfRow(y);
 		statsQuadRGGB10P(rows, stats_[0]);
 		src += stride_ * 8;
 	}

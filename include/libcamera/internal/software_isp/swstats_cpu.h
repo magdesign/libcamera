@@ -67,6 +67,7 @@ public:
 		    y >= (window_.y + window_.height))
 			return;
 
+		setAfRow(y - window_.y);
 		(this->*stats0_)(src, stats_[statsBufferIndex]);
 	}
 
@@ -79,6 +80,7 @@ public:
 		    y >= (window_.y + window_.height))
 			return;
 
+		setAfRow(y - window_.y);
 		(this->*stats2_)(src, stats_[statsBufferIndex]);
 	}
 
@@ -116,6 +118,19 @@ private:
 	unsigned int ySkipMask_;
 
 	Rectangle window_;
+
+	/*
+	 * Autofocus sharpness is measured over the centre half of the window:
+	 * rows window_.height / 4 to 3 * window_.height / 4, and the matching
+	 * range of samples along each line.
+	 */
+	void setAfRow(unsigned int y)
+	{
+		afRow_ = y >= window_.height / 4 && y < window_.height * 3 / 4;
+	}
+	bool afRow_ = false;
+	unsigned int afSampleStart_ = 0;
+	unsigned int afSampleEnd_ = 0;
 
 	Size patternSize_;
 

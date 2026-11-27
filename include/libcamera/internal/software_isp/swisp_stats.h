@@ -56,6 +56,18 @@ struct SwIspStats {
 	 * \brief A histogram of luminance values of all the sampled pixels
 	 */
 	Histogram yHistogram;
+	/**
+	 * \brief Sum of the absolute horizontal second derivatives of the
+	 * luminance over the centre half of the window
+	 *
+	 * This is a contrast measure for autofocus. Divide it by
+	 * \a sharpnessLuma to make it independent of the exposure.
+	 */
+	uint64_t sharpness;
+	/**
+	 * \brief Sum of the luminance samples used for \a sharpness
+	 */
+	uint64_t sharpnessLuma;
 };
 
 } /* namespace libcamera */
