@@ -68,7 +68,7 @@ Af::Af()
 {
 }
 
-int Af::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
+int Af::init(IPAContext &context, const ValueNode &tuningData)
 {
 	if (tuningData.contains("map")) {
 		auto map = tuningData["map"].get<Pwl>();
@@ -89,6 +89,22 @@ int Af::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
 	fineStep_ = tuningData["fineStep"].get<int32_t>(0);
 	dropRatio_ = tuningData["dropRatio"].get<double>(0.75);
 	dropFrames_ = tuningData["dropFrames"].get<uint32_t>(3);
+
+	/*
+	 * Advertise the controls already, applications check them before the
+	 * camera is configured. configure() refines LensPosition from the lens,
+	 * or removes the controls if the camera turns out to have no lens.
+	 */
+	Pwl::Interval dioptres = dioptreToPosition_.empty()
+					 ? Pwl::Interval(0.0, kMaxDioptre)
+					 : dioptreToPosition_.domain();
+	context.ctrlMap[&controls::AfMode] =
+		ControlInfo(controls::AfModeValues, ControlValue(controls::AfModeContinuous));
+	context.ctrlMap[&controls::AfTrigger] = ControlInfo(controls::AfTriggerValues);
+	context.ctrlMap[&controls::LensPosition] =
+		ControlInfo(static_cast<float>(dioptres.start),
+			    static_cast<float>(dioptres.end),
+			    static_cast<float>(dioptres.start));
 
 	return 0;
 }
