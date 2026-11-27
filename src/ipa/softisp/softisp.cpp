@@ -194,14 +194,19 @@ int IPASoftIsp::init(const IPASettings &settings,
 	if (data->contains("options")) {
 		const ValueNode *options = &(*data)["options"];
 
-		if (options->contains("min_output_width"))
-			sizeLimits->min.width = (*options)["min_output_width"].get<uint32_t>(0);
-		if (options->contains("min_output_heigth"))
-			sizeLimits->min.height = (*options)["min_output_heigth"].get<uint32_t>(0);
-		if (options->contains("max_output_width"))
-			sizeLimits->max.width = (*options)["max_output_width"].get<uint32_t>(0);
-		if (options->contains("max_output_heigth"))
-			sizeLimits->max.height = (*options)["max_output_heigth"].get<uint32_t>(0);
+		auto get = [&](const char *key, const char *legacyKey, uint32_t def) {
+			/* Also accept the misspelled keys of the first version. */
+			if (options->contains(key))
+				return (*options)[key].get<uint32_t>(def);
+			if (legacyKey && options->contains(legacyKey))
+				return (*options)[legacyKey].get<uint32_t>(def);
+			return def;
+		};
+
+		sizeLimits->min.width = get("min_output_width", nullptr, sizeLimits->min.width);
+		sizeLimits->min.height = get("min_output_height", "min_output_heigth", sizeLimits->min.height);
+		sizeLimits->max.width = get("max_output_width", nullptr, sizeLimits->max.width);
+		sizeLimits->max.height = get("max_output_height", "max_output_heigth", sizeLimits->max.height);
 	}
 
 	return 0;
