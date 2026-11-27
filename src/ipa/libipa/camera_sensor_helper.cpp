@@ -628,6 +628,19 @@ public:
 };
 REGISTER_CAMERA_SENSOR_HELPER("imx355", CameraSensorHelperImx355)
 
+class CameraSensorHelperImx363 : public CameraSensorHelper
+{
+public:
+	CameraSensorHelperImx363()
+	{
+		/* 64 at 10 bits. */
+		blackLevel_ = 4096;
+		/* Sony 512-based analogue gain: 512 / (512 - code), code 0..480. */
+		gain_ = AnalogueGainLinear{ 0, 512, -1, 512 };
+	}
+};
+REGISTER_CAMERA_SENSOR_HELPER("imx363", CameraSensorHelperImx363)
+
 class CameraSensorHelperImx415 : public CameraSensorHelper
 {
 public:
@@ -851,6 +864,19 @@ public:
 };
 REGISTER_CAMERA_SENSOR_HELPER("ov64a40", CameraSensorHelperOv64a40)
 
+class CameraSensorHelperOv7251 : public CameraSensorHelper
+{
+public:
+	CameraSensorHelperOv7251()
+	{
+		/* 64 at 10 bits. */
+		blackLevel_ = 4096;
+		/* Gain code in 1/16 steps (register 0x350a/0x350b). */
+		gain_ = AnalogueGainLinear{ 1, 0, 0, 16 };
+	}
+};
+REGISTER_CAMERA_SENSOR_HELPER("ov7251", CameraSensorHelperOv7251)
+
 class CameraSensorHelperOv8858 : public CameraSensorHelper
 {
 public:
@@ -886,6 +912,32 @@ public:
 	}
 };
 REGISTER_CAMERA_SENSOR_HELPER("ov13858", CameraSensorHelperOv13858)
+
+class CameraSensorHelperS5k3t1 : public CameraSensorHelper
+{
+public:
+	CameraSensorHelperS5k3t1()
+	{
+		/* 64 at 10 bits. */
+		blackLevel_ = 4096;
+		/* Samsung analogue gain code in 1/32 steps, 1x to 16x. */
+		gain_ = AnalogueGainLinear{ 1, 0, 0, 32 };
+	}
+};
+REGISTER_CAMERA_SENSOR_HELPER("s5k3t1", CameraSensorHelperS5k3t1)
+
+class CameraSensorHelperS5k5e8 : public CameraSensorHelper
+{
+public:
+	CameraSensorHelperS5k5e8()
+	{
+		/* 64 at 10 bits. */
+		blackLevel_ = 4096;
+		/* Samsung analogue gain code in 1/32 steps, 1x to 16x. */
+		gain_ = AnalogueGainLinear{ 1, 0, 0, 32 };
+	}
+};
+REGISTER_CAMERA_SENSOR_HELPER("s5k5e8", CameraSensorHelperS5k5e8)
 
 class CameraSensorHelperVd55g1 : public CameraSensorHelper
 {
