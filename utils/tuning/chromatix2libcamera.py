@@ -261,6 +261,12 @@ def main():
     ap.add_argument('--awb-ct', help='comma separated CT per AWB reference '
                     'point (0 = skip point)')
     ap.add_argument('--no-lsc', action='store_true')
+    ap.add_argument('--af-scan', help='MIN,MAX: lens positions to scan; '
+                    'adds the Af algorithm (only for cameras with a focus lens)')
+    ap.add_argument('--af-map', help='D0,P0,D1,P1,...: dioptres to lens '
+                    'position map for the Af algorithm')
+    ap.add_argument('--af-steps', default='160,40',
+                    help='COARSE,FINE: Af scan steps in lens positions')
     ap.add_argument('--max-size', help='WxH: limit softisp output sizes, so '
                     'that libcamera picks a sensor mode no larger than this')
     a = ap.parse_args()
@@ -324,7 +330,17 @@ def main():
                 # the platform: softisp uses UQ2.6 (gain * 64, max 3.98).
                 q = [min(255, max(0, round(x * 64))) for x in resample(t, LSC_W, LSC_H)]
                 out.append('          %s: ' % key + fmt_ints(q, 17, 13))
-    out += ['  - Adjust:', '  - Agc:', '...']
+    out += ['  - Adjust:', '  - Agc:']
+    if a.af_scan:
+        lo, hi = a.af_scan.split(',')
+        coarse, fine = a.af_steps.split(',')
+        out += ['  - Af:',
+                '      scanRange: [ %s, %s ]' % (lo, hi),
+                '      coarseStep: %s' % coarse,
+                '      fineStep: %s' % fine]
+        if a.af_map:
+            out.append('      map: [ %s ]' % ', '.join(a.af_map.split(',')))
+    out.append('...')
     print('\n'.join(out))
 
     print('# refPt (R/G, B/G):', ' '.join('%.3f/%.3f' % p for p in (pts or [])),
