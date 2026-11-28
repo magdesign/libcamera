@@ -106,16 +106,21 @@ algorithms:
                213, 173, 143, 127, 118, 111, 106, 103, 102, 102, 105, 110, 117, 126, 141, 169, 210 ]
   - Adjust:
   - Agc:
+      # The software ISP runs AGC on every fourth frame: 1 - (1 - 0.2)^4
+      speed: 0.6
       AeConstraintMode:
         Normal:
           lower:
             qLo: 0.98
             qHi: 1.0
             yTarget: 0.5
+          # The histogram is taken before lens shading correction, white
+          # balance and colour correction, which take a raw 0.82 neutral to
+          # white: keep the brightest 2% well below that.
           upper:
             qLo: 0.98
             qHi: 1.0
-            yTarget: 0.8
+            yTarget: 0.6
   - Af:
       scanRange: [ 1000, 4095 ]
       step: 220

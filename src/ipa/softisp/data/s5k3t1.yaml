@@ -213,6 +213,8 @@ algorithms:
                198, 188, 172, 156, 143, 133, 125, 120, 119, 120, 124, 130, 140, 153, 166, 181, 192 ]
   - Adjust:
   - Agc:
+      # The software ISP runs AGC on every fourth frame: 1 - (1 - 0.2)^4
+      speed: 0.6
       AeConstraintMode:
         Normal:
           lower:
