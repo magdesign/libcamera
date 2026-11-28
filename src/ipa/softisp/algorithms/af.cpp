@@ -92,13 +92,19 @@ constexpr double kFirstStepRatio = 0.9;
 
 /*
  * Relative contrast change between two statistics for the scene to count as
- * stable. The contrast is normalised by the luminance, so exposure changes
- * matter little; a hand held camera still varies it by a few percent.
+ * stable; a hand held camera varies it by a few percent.
  */
 constexpr double kStableChange = 0.1;
 
+/*
+ * Relative luminance change between two statistics for the exposure to count
+ * as settled. Washed out or dark frames while the exposure adapts to a new
+ * scene have next to no contrast to search on.
+ */
+constexpr double kStableLumaChange = 0.15;
+
 /* Statistics to wait at most for a stable scene before refocusing anyway */
-constexpr unsigned int kMaxWait = 6;
+constexpr unsigned int kMaxWait = 10;
 
 } /* namespace */
 
@@ -110,7 +116,7 @@ Af::Af()
 	  afState_(controls::AfStateIdle), position_(0), startPos_(0), dir_(1),
 	  reversed_(false), bestPos_(0), bestScore_(0.0), lowestScore_(0.0),
 	  worseCount_(0),
-	  focusedScore_(0.0), focusedLuma_(0.0), lastScore_(0.0),
+	  focusedScore_(0.0), focusedLuma_(0.0), lastScore_(0.0), lastLuma_(0.0),
 	  dropCount_(0), waitCount_(0), skip_(false)
 {
 }
@@ -449,12 +455,15 @@ void Af::monitor(double contrast, double luma)
 	afState_ = controls::AfStateScanning;
 	waitCount_ = 0;
 	lastScore_ = contrast;
+	lastLuma_ = luma;
 }
 
-void Af::waitStable(IPAContext &context, double contrast)
+void Af::waitStable(IPAContext &context, double contrast, double luma)
 {
-	bool stable = std::abs(contrast / lastScore_ - 1.0) < kStableChange;
+	bool stable = std::abs(contrast / lastScore_ - 1.0) < kStableChange &&
+		      std::abs(luma / lastLuma_ - 1.0) < kStableLumaChange;
 	lastScore_ = contrast;
+	lastLuma_ = luma;
 
 	if (!stable && ++waitCount_ < kMaxWait)
 		return;
@@ -493,7 +502,7 @@ void Af::process(IPAContext &context,
 		return;
 
 	case Phase::Wait:
-		waitStable(context, contrast);
+		waitStable(context, contrast, luma);
 		return;
 
 	case Phase::Search:
