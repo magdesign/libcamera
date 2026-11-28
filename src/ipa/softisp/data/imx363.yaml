@@ -10,6 +10,9 @@ algorithms:
       # Malvar-He-Cutler strength over analogue gain: full detail at low
       # gain, mostly bilinear at high gain where it would amplify noise.
       strength: [ 1.0, 1.0, 4.0, 1.0, 12.0, 0.3, 16.0, 0.3 ]
+      # Chroma noise reduction over analogue gain: the colour noise is
+      # low frequency blotches, visible from about 2x on.
+      chromaDenoise: [ 1.0, 0.0, 2.0, 0.5, 4.0, 1.0, 16.0, 1.0 ]
   - Awb:
       colourGains:
         - ct: 2300

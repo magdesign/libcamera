@@ -6,6 +6,7 @@
 #include "demosaic.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <libcamera/base/log.h>
 
@@ -34,6 +35,9 @@ namespace ipa::softisp::algorithms {
  *
  * Without the strength key, full Malvar-He-Cutler interpolation is used at
  * all gains.
+ *
+ * The chromaDenoise key sets the chroma noise reduction strength, from 0.0
+ * (off) to 1.0, the same way. Without it, there is no noise reduction.
  */
 
 LOG_DEFINE_CATEGORY(IPASoftIspDemosaic)
@@ -41,16 +45,20 @@ LOG_DEFINE_CATEGORY(IPASoftIspDemosaic)
 int Demosaic::init([[maybe_unused]] IPAContext &context,
 		   const ValueNode &tuningData)
 {
-	if (!tuningData.contains("strength"))
-		return 0;
+	for (auto [key, pwl] : { std::pair{ "strength", &strength_ },
+				 std::pair{ "chromaDenoise", &chromaDenoise_ } }) {
+		if (!tuningData.contains(key))
+			continue;
 
-	auto strength = tuningData["strength"].get<Pwl>();
-	if (!strength) {
-		LOG(IPASoftIspDemosaic, Error) << "Invalid strength";
-		return -EINVAL;
+		auto value = tuningData[key].get<Pwl>();
+		if (!value) {
+			LOG(IPASoftIspDemosaic, Error) << "Invalid " << key;
+			return -EINVAL;
+		}
+
+		*pwl = std::move(*value);
 	}
 
-	strength_ = std::move(*strength);
 	return 0;
 }
 
@@ -74,6 +82,9 @@ void Demosaic::prepare([[maybe_unused]] IPAContext &context,
 	double strength = strength_.empty() ? 1.0 : strength_.eval(gain_);
 
 	params->demosaicStrength = std::clamp(strength, 0.0, 1.0);
+
+	double denoise = chromaDenoise_.empty() ? 0.0 : chromaDenoise_.eval(gain_);
+	params->chromaDenoise = std::clamp(denoise, 0.0, 1.0);
 }
 
 void Demosaic::process([[maybe_unused]] IPAContext &context,

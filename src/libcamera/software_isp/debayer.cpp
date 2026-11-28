@@ -51,6 +51,13 @@ namespace libcamera {
  */
 
 /**
+ * \var DebayerParams::chromaDenoise
+ * \brief Chroma noise reduction strength, from 0.0 (off) to 1.0
+ *
+ * Only used by the GPU debayering of packed regular Bayer patterns.
+ */
+
+/**
  * \var DebayerParams::kLscGridSize
  * \brief Number of lens shading grid areas in one direction
  */

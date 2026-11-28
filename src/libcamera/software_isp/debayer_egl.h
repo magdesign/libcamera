@@ -68,6 +68,8 @@ private:
 	static int getInputConfig(PixelFormat inputFormat, DebayerInputConfig &config);
 	int initBayerShaders(PixelFormat inputFormat, PixelFormat outputFormat);
 	int getShaderVariableLocations();
+	int initChromaShader(const std::vector<std::string> &shaderEnv);
+	int renderChromaCells(const DebayerParams &params);
 	void setShaderVariableValues(eGLImage &eGLImageIn, const DebayerParams &params);
 	int debayerGPU(FrameBuffer *input, FrameBuffer *output, const DebayerParams &params, std::optional<MappedFrameBuffer> *mappedInputBuffer, std::optional<DmaSyncer> *inputBufferDmaSyncer);
 
@@ -124,6 +126,31 @@ private:
 
 	/* Demosaicing strength */
 	GLint demosaicStrengthUniformDataIn_;
+
+	/* Chroma noise reduction strength */
+	GLint chromaDenoiseUniformDataIn_;
+	GLint chromaTextureUniform_;
+	GLint chromaSizeUniform_;
+
+	/*
+	 * Chroma noise reduction pre-pass, rendering the colour of each 2x2
+	 * Bayer cell to a half resolution texture
+	 */
+	GLuint chromaProgramId_ = 0;
+	std::optional<eGLImage> eglImageChroma_;
+	struct {
+		GLint vertex;
+		GLint texture;
+		GLint texY;
+		GLint size;
+		GLint step;
+		GLint firstRed;
+		GLint awb;
+		GLint blackLevel;
+		GLint lsc;
+		GLint projMatrix;
+		GLint strideFactor;
+	} chromaLoc_;
 
 	Size nativeOutputSize_;
 	Rectangle window_;

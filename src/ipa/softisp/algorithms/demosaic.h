@@ -34,6 +34,7 @@ public:
 
 private:
 	Pwl strength_;
+	Pwl chromaDenoise_;
 	double gain_ = 1.0;
 };
 

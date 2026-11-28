@@ -64,6 +64,11 @@ uniform float gamma;
 uniform float contrastExp;
 /* 0.0 = bilinear, 1.0 = Malvar-He-Cutler demosaicing */
 uniform float demosaic_strength;
+/* 0.0 = off, 1.0 = full chroma noise reduction */
+uniform float chroma_denoise;
+/* White balanced colour of each 2x2 cell, square root encoded */
+uniform sampler2D chroma_tex;
+uniform vec2 chroma_size;
 
 #if defined(APPLY_LSC)
 uniform sampler2D lsc_tex;
@@ -110,6 +115,49 @@ float fetch_pixel(vec2 pixel)
 	vec2 p = vec2(mirror(pixel.x, tex_size.x - 1.0),
 		      mirror(pixel.y, tex_size.y - 1.0));
 	return texture2D(tex_y, vec2(packed_byte(p.x), p.y) * tex_step).r;
+}
+
+#endif
+
+#if !defined (QUAD_BAYER)
+vec3 cell_colour(vec2 pos)
+{
+	vec3 c = texture2D(chroma_tex, pos / chroma_size).rgb;
+	return c * c;
+}
+
+/*
+ * Chroma noise reduction: replace the colour differences to green by their
+ * mean over the 8x8 Bayer cells around the centre cell n. Each of the nine
+ * bilinear taps, three cells apart, averages 2x2 cells, and its weight falls to zero when its
+ * luminance differs from the centre by more than the noise tolerance, which
+ * keeps colours from bleeding across edges. Green, which carries most of the
+ * detail, is kept.
+ */
+vec3 denoise_chroma(vec3 rgb, vec2 n)
+{
+	const vec3 luma = vec3(0.25, 0.5, 0.25);
+	vec3 c0 = cell_colour(n + vec2(0.5));
+	float l0 = dot(c0, luma);
+	float tol = 0.02 + 0.2 * sqrt(l0);
+	vec2 sum = c0.rb - c0.g;
+	float weights = 1.0;
+
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec3 c = cell_colour(n + 3.0 * vec2(float(i), float(j)));
+			float d = (dot(c, luma) - l0) / tol;
+			float w = max(1.0 - d * d, 0.0);
+			sum += w * (c.rb - c.g);
+			weights += w;
+		}
+	}
+
+	vec2 chroma = sum / weights;
+	vec3 smoothed = clamp(vec3(rgb.g + chroma.x, rgb.g, rgb.g + chroma.y),
+			      vec3(0.0), vec3(1.0));
+
+	return mix(rgb, smoothed, min(chroma_denoise, 1.0));
 }
 #endif
 
@@ -257,6 +305,12 @@ void main(void)
 
 	/* Apply AWB gains, and saturate each channel at sensor range */
 	rgb = clamp(rgb * awb, vec3(0.0), vec3(1.0));
+
+#if !defined (QUAD_BAYER)
+	if (chroma_denoise > 0.0)
+		rgb = denoise_chroma(rgb, (center_pixel - alternate -
+					   mod(tex_bayer_first_red, 2.0)) / 2.0);
+#endif
 
 	/* Colour Correction Matrix */
 	rgb = ccm * rgb;

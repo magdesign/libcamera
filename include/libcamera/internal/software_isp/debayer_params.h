@@ -27,6 +27,7 @@ struct DebayerParams {
 	float contrastExp = 1.0;
 	RGB<double> gains = RGB<double>({ 1.0, 1.0, 1.0 });
 	float demosaicStrength = 1.0;
+	float chromaDenoise = 0.0;
 
 	/**
 	 * To prevent OpenGL alignment issues, the number of bytes in each row

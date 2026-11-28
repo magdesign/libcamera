@@ -112,6 +112,9 @@ int DebayerEGL::getShaderVariableLocations(void)
 	gammaUniformDataIn_ = glGetUniformLocation(programId_, "gamma");
 	contrastExpUniformDataIn_ = glGetUniformLocation(programId_, "contrastExp");
 	demosaicStrengthUniformDataIn_ = glGetUniformLocation(programId_, "demosaic_strength");
+	chromaDenoiseUniformDataIn_ = glGetUniformLocation(programId_, "chroma_denoise");
+	chromaTextureUniform_ = glGetUniformLocation(programId_, "chroma_tex");
+	chromaSizeUniform_ = glGetUniformLocation(programId_, "chroma_size");
 
 	textureUniformStep_ = glGetUniformLocation(programId_, "tex_step");
 	textureUniformSize_ = glGetUniformLocation(programId_, "tex_size");
@@ -129,6 +132,7 @@ int DebayerEGL::getShaderVariableLocations(void)
 			    << " gamma " << gammaUniformDataIn_
 			    << " contrastExp " << contrastExpUniformDataIn_
 			    << " demosaic_strength " << demosaicStrengthUniformDataIn_
+			    << " chroma_denoise " << chromaDenoiseUniformDataIn_
 			    << " tex_step " << textureUniformStep_
 			    << " tex_size " << textureUniformSize_
 			    << " stride_factor " << textureUniformStrideFactor_
@@ -273,6 +277,11 @@ int DebayerEGL::initBayerShaders(PixelFormat inputFormat, PixelFormat outputForm
 	egl_.dumpShaderSource(vertexShaderId_);
 	egl_.dumpShaderSource(fragmentShaderId_);
 
+	/* The chroma noise reduction needs a regular packed Bayer pattern. */
+	if (fragmentShaderData.data() == bayer_1x_packed_frag.data() && !quadBayer_ &&
+	    initChromaShader(shaderEnv))
+		LOG(Debayer, Warning) << "No chroma noise reduction";
+
 	/* Ensure we set the programId_ */
 	glUseProgram(programId_);
 	err = glGetError();
@@ -360,6 +369,113 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
 
 	inputBufferCount_ = inputCfg.bufferCount;
 	outputBufferCount_ = outputCfg.bufferCount;
+
+	return 0;
+}
+
+int DebayerEGL::initChromaShader(const std::vector<std::string> &shaderEnv)
+{
+	GLuint vertexShaderId;
+	GLuint fragmentShaderId;
+
+	if (egl_.compileVertexShader(vertexShaderId, identity_vert, shaderEnv))
+		return -ENODEV;
+	utils::scope_exit vShaderGuard([&] { glDeleteShader(vertexShaderId); });
+
+	if (egl_.compileFragmentShader(fragmentShaderId, chroma_cells_frag, shaderEnv))
+		return -ENODEV;
+	utils::scope_exit fShaderGuard([&] { glDeleteShader(fragmentShaderId); });
+
+	if (egl_.linkProgram(chromaProgramId_, vertexShaderId, fragmentShaderId)) {
+		chromaProgramId_ = 0;
+		return -ENODEV;
+	}
+
+	chromaLoc_.vertex = glGetAttribLocation(chromaProgramId_, "vertexIn");
+	chromaLoc_.texture = glGetAttribLocation(chromaProgramId_, "textureIn");
+	chromaLoc_.texY = glGetUniformLocation(chromaProgramId_, "tex_y");
+	chromaLoc_.size = glGetUniformLocation(chromaProgramId_, "tex_size");
+	chromaLoc_.step = glGetUniformLocation(chromaProgramId_, "tex_step");
+	chromaLoc_.firstRed = glGetUniformLocation(chromaProgramId_, "tex_bayer_first_red");
+	chromaLoc_.awb = glGetUniformLocation(chromaProgramId_, "awb");
+	chromaLoc_.blackLevel = glGetUniformLocation(chromaProgramId_, "blacklevel");
+	chromaLoc_.lsc = glGetUniformLocation(chromaProgramId_, "lsc_tex");
+	chromaLoc_.projMatrix = glGetUniformLocation(chromaProgramId_, "proj_matrix");
+	chromaLoc_.strideFactor = glGetUniformLocation(chromaProgramId_, "stride_factor");
+
+	/* initBayerShaders() leaves the debayering program in use. */
+	glUseProgram(programId_);
+
+	return 0;
+}
+
+/*
+ * Render the white balanced colour of each 2x2 Bayer cell of the input, bound
+ * on texture unit 0, to the half resolution chroma texture, and bind it for
+ * the debayering program, which is left in use with its vertex attributes.
+ */
+int DebayerEGL::renderChromaCells(const DebayerParams &params)
+{
+	static const GLfloat vertices[4][2] = {
+		{ -1.0f, -1.0f }, { -1.0f, +1.0f }, { +1.0f, +1.0f }, { +1.0f, -1.0f },
+	};
+	static const GLfloat coordinates[4][2] = {
+		{ 0.0f, 0.0f }, { 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f },
+	};
+	static const GLfloat identity[16] = {
+		1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+	};
+
+	if (egl_.attachTextureToFBO(*eglImageChroma_))
+		return -ENODEV;
+
+	glUseProgram(chromaProgramId_);
+
+	glEnableVertexAttribArray(chromaLoc_.vertex);
+	glVertexAttribPointer(chromaLoc_.vertex, 2, GL_FLOAT, GL_TRUE,
+			      2 * sizeof(GLfloat), vertices);
+	glEnableVertexAttribArray(chromaLoc_.texture);
+	glVertexAttribPointer(chromaLoc_.texture, 2, GL_FLOAT, GL_TRUE,
+			      2 * sizeof(GLfloat), coordinates);
+
+	GLfloat size[] = { static_cast<GLfloat>(width_), static_cast<GLfloat>(height_) };
+	GLfloat step[] = { static_cast<float>(bytesPerPixel_) / (inputConfig_.stride - 1),
+			   1.0f / (height_ - 1) };
+	glUniform1i(chromaLoc_.texY, 0);
+	glUniform2fv(chromaLoc_.size, 1, size);
+	glUniform2fv(chromaLoc_.step, 1, step);
+	glUniform2f(chromaLoc_.firstRed, firstRed_x_, firstRed_y_);
+	glUniform3f(chromaLoc_.awb, params.gains[0], params.gains[1], params.gains[2]);
+	glUniform3f(chromaLoc_.blackLevel, params.blackLevel[0], params.blackLevel[1],
+		    params.blackLevel[2]);
+	if (lscEnabled_)
+		glUniform1i(chromaLoc_.lsc, eglImageLscLookup_->texture_unit_uniform_id_);
+	glUniformMatrix4fv(chromaLoc_.projMatrix, 1, GL_FALSE, identity);
+	glUniform1f(chromaLoc_.strideFactor, 1.0f);
+
+	glViewport(0, 0, eglImageChroma_->width_, eglImageChroma_->height_);
+	glDrawArrays(GL_TRIANGLE_FAN, 0, DEBAYER_OPENGL_COORDS);
+
+	glUseProgram(programId_);
+
+	/* The vertex attribute arrays are shared by both programs. */
+	static const GLfloat vcoordinates[4][2] = {
+		{ -1.0f, -1.0f }, { -1.0f, +1.0f }, { +1.0f, +1.0f }, { +1.0f, -1.0f },
+	};
+	glVertexAttribPointer(attributeVertex_, 2, GL_FLOAT, GL_TRUE,
+			      2 * sizeof(GLfloat), vcoordinates);
+	glVertexAttribPointer(attributeTexture_, 2, GL_FLOAT, GL_TRUE,
+			      2 * sizeof(GLfloat), textureCoordinates_.data());
+
+	egl_.activateBindTexture(*eglImageChroma_);
+	glUniform1i(chromaTextureUniform_, eglImageChroma_->texture_unit_uniform_id_);
+	glUniform2f(chromaSizeUniform_, eglImageChroma_->width_, eglImageChroma_->height_);
+
+	GLenum err = glGetError();
+	if (err != GL_NO_ERROR) {
+		LOG(eGL, Error) << "Drawing chroma cells fail " << err;
+		return -ENODEV;
+	}
 
 	return 0;
 }
@@ -527,6 +643,11 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
 	glUniform1f(demosaicStrengthUniformDataIn_, params.demosaicStrength);
 	LOG(Debayer, Debug) << " demosaicStrengthUniformDataIn_ " << demosaicStrengthUniformDataIn_ << " data " << params.demosaicStrength;
 
+	/*
+	 * Chroma noise reduction
+	 */
+	glUniform1f(chromaDenoiseUniformDataIn_, params.chromaDenoise);
+
 	return;
 }
 
@@ -627,8 +748,14 @@ int DebayerEGL::debayerGPU(FrameBuffer *input, FrameBuffer *output, const Debaye
 	if (!eglImageOut)
 		return -ENOMEM;
 
-	egl_.attachTextureToFBO(*eglImageOut);
 	setShaderVariableValues(*eglImageIn, params);
+
+	/* The LSC table is up to date once the variables are set. */
+	if (eglImageChroma_ && params.chromaDenoise > 0.0f &&
+	    renderChromaCells(params))
+		return -ENODEV;
+
+	egl_.attachTextureToFBO(*eglImageOut);
 
 	const Rectangle viewport = softwareIspViewport({ width_, height_ }, outputSize_,
 						       quadBayer_);
@@ -726,6 +853,15 @@ int DebayerEGL::start()
 		egl_.createTexture2D(*eglImageLscLookup_, nullptr, GL_LINEAR);
 	}
 
+	if (chromaProgramId_) {
+		unsigned int width = width_ / 2;
+		unsigned int height = height_ / 2;
+
+		eglImageChroma_.emplace(GL_RGBA, width, height, width * 4,
+					GL_TEXTURE3, 3);
+		egl_.createTexture2D(*eglImageChroma_, nullptr, GL_LINEAR);
+	}
+
 	return 0;
 }
 
@@ -736,6 +872,11 @@ void DebayerEGL::stop()
 
 	eglImageLscLookup_.reset();
 	lscLutVersion_.reset();
+	eglImageChroma_.reset();
+
+	if (chromaProgramId_)
+		glDeleteProgram(chromaProgramId_);
+	chromaProgramId_ = 0;
 
 	if (programId_)
 		glDeleteProgram(programId_);
