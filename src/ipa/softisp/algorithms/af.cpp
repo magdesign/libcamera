@@ -97,14 +97,22 @@ constexpr double kFirstStepRatio = 0.9;
 constexpr double kStableChange = 0.1;
 
 /*
- * Relative luminance change between two statistics for the exposure to count
- * as settled. Washed out or dark frames while the exposure adapts to a new
- * scene have next to no contrast to search on.
+ * Relative change of the exposure (exposure time times gain) between two
+ * statistics for it to count as settled. While the exposure adapts to a new
+ * scene the contrast changes with it, and a search would climb towards
+ * whichever end it happens to move to.
  */
-constexpr double kStableLumaChange = 0.15;
+constexpr double kStableExposureChange = 0.04;
+
+/*
+ * A search is abandoned when the exposure moves this much from its start,
+ * at most kMaxAborts times before each successful search.
+ */
+constexpr double kSearchExposureChange = 0.08;
+constexpr unsigned int kMaxAborts = 2;
 
 /* Statistics to wait at most for a stable scene before refocusing anyway */
-constexpr unsigned int kMaxWait = 10;
+constexpr unsigned int kMaxWait = 15;
 
 } /* namespace */
 
@@ -116,7 +124,8 @@ Af::Af()
 	  afState_(controls::AfStateIdle), position_(0), startPos_(0), dir_(1),
 	  reversed_(false), bestPos_(0), bestScore_(0.0), lowestScore_(0.0),
 	  worseCount_(0),
-	  focusedScore_(0.0), focusedLuma_(0.0), lastScore_(0.0), lastLuma_(0.0),
+	  focusedScore_(0.0), focusedLuma_(0.0), lastScore_(0.0), exposure_(0.0),
+	  searchExposure_(0.0), lastExposure_(0.0), abortsLeft_(kMaxAborts),
 	  dropCount_(0), waitCount_(0), skip_(false)
 {
 }
@@ -242,6 +251,7 @@ void Af::startSearch()
 	worseCount_ = 0;
 	dropCount_ = 0;
 	waitCount_ = 0;
+	searchExposure_ = exposure_;
 	skip_ = false;
 }
 
@@ -342,6 +352,7 @@ void Af::finishSearch(IPAContext &context)
 
 	afState_ = ok ? controls::AfStateFocused : controls::AfStateFailed;
 	phase_ = Phase::Focused;
+	abortsLeft_ = kMaxAborts;
 	focusedScore_ = 0.0;
 	dropCount_ = 0;
 
@@ -451,19 +462,24 @@ void Af::monitor(double contrast, double luma)
 		<< "Contrast changed from " << focusedScore_ << " to "
 		<< contrast << ", waiting for a stable scene";
 
+	wait(contrast);
+}
+
+void Af::wait(double contrast)
+{
 	phase_ = Phase::Wait;
 	afState_ = controls::AfStateScanning;
 	waitCount_ = 0;
 	lastScore_ = contrast;
-	lastLuma_ = luma;
+	lastExposure_ = exposure_;
 }
 
-void Af::waitStable(IPAContext &context, double contrast, double luma)
+void Af::waitStable(IPAContext &context, double contrast)
 {
 	bool stable = std::abs(contrast / lastScore_ - 1.0) < kStableChange &&
-		      std::abs(luma / lastLuma_ - 1.0) < kStableLumaChange;
+		      std::abs(exposure_ / lastExposure_ - 1.0) < kStableExposureChange;
 	lastScore_ = contrast;
-	lastLuma_ = luma;
+	lastExposure_ = exposure_;
 
 	if (!stable && ++waitCount_ < kMaxWait)
 		return;
@@ -475,7 +491,7 @@ void Af::waitStable(IPAContext &context, double contrast, double luma)
 
 void Af::process(IPAContext &context,
 		 [[maybe_unused]] const uint32_t frame,
-		 [[maybe_unused]] IPAFrameContext &frameContext,
+		 IPAFrameContext &frameContext,
 		 const SwIspStats *stats,
 		 ControlList &metadata)
 {
@@ -491,6 +507,7 @@ void Af::process(IPAContext &context,
 
 	double contrast = static_cast<double>(stats->sharpness) / stats->sharpnessLuma;
 	double luma = static_cast<double>(stats->sharpnessLuma);
+	exposure_ = frameContext.sensor.exposure * frameContext.sensor.gain;
 
 	switch (phase_) {
 	case Phase::Idle:
@@ -502,13 +519,22 @@ void Af::process(IPAContext &context,
 		return;
 
 	case Phase::Wait:
-		waitStable(context, contrast, luma);
+		waitStable(context, contrast);
 		return;
 
 	case Phase::Search:
 		/* The first statistics after a move outside process() predate it. */
 		if (skip_) {
 			skip_ = false;
+			return;
+		}
+		/* Contrast samples taken at different exposures do not compare. */
+		if (abortsLeft_ && searchExposure_ > 0.0 &&
+		    std::abs(exposure_ / searchExposure_ - 1.0) > kSearchExposureChange) {
+			LOG(IPASoftIspAf, Debug)
+				<< "Exposure changed during the search, waiting";
+			abortsLeft_--;
+			wait(contrast);
 			return;
 		}
 		searchStep(context, contrast);

@@ -52,7 +52,8 @@ private:
 	void finishSearch(IPAContext &context);
 	void moveTo(IPAContext &context, int32_t position);
 	void monitor(double contrast, double luma);
-	void waitStable(IPAContext &context, double contrast, double luma);
+	void wait(double contrast);
+	void waitStable(IPAContext &context, double contrast);
 
 	/* Tuning */
 	Pwl dioptreToPosition_;
@@ -87,7 +88,10 @@ private:
 	double focusedScore_;
 	double focusedLuma_;
 	double lastScore_;
-	double lastLuma_;
+	double exposure_;
+	double searchExposure_;
+	double lastExposure_;
+	unsigned int abortsLeft_;
 	unsigned int dropCount_;
 	unsigned int waitCount_;
 	bool skip_;
