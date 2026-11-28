@@ -90,6 +90,7 @@ private:
 
 	utils::Duration filteredExposure_;
 	double speed_;
+	utils::Duration flickerPeriod_;
 	mutable bool luxWarningEnabled_;
 	Pwl relativeLuminanceTarget_;
 	uint64_t frameCount_;

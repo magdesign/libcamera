@@ -28,6 +28,7 @@ public:
 	void configure(utils::Duration lineLength, const CameraSensorHelper *sensorHelper);
 	void setLimits(utils::Duration minExposureTime, utils::Duration maxExposureTime,
 		       double minGain, double maxGain);
+	void setFlickerPeriod(utils::Duration flickerPeriod);
 
 	struct Result {
 		utils::Duration exposureTime;
@@ -44,6 +45,7 @@ public:
 	double maxGain() const { return maxGain_; }
 
 private:
+	Result splitExposureStages(utils::Duration exposure) const;
 	utils::Duration clampExposureTime(utils::Duration exposureTime,
 					  double *quantizationGain = nullptr) const;
 	double clampGain(double gain, double *quantizationGain = nullptr) const;
@@ -56,6 +58,7 @@ private:
 	utils::Duration maxExposureTime_;
 	double minGain_;
 	double maxGain_;
+	utils::Duration flickerPeriod_;
 	const CameraSensorHelper *sensorHelper_;
 };
 

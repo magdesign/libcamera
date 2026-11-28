@@ -184,7 +184,8 @@ static constexpr unsigned int kDefaultLuxLevel = 500;
  */
 
 AgcMeanLuminance::AgcMeanLuminance()
-	: filteredExposure_(0s), speed_(kDefaultSpeed), luxWarningEnabled_(true),
+	: filteredExposure_(0s), speed_(kDefaultSpeed), flickerPeriod_(0s),
+	  luxWarningEnabled_(true),
 	  frameCount_(0)
 {
 }
@@ -407,8 +408,10 @@ int AgcMeanLuminance::parseExposureModes(const ValueNode &tuningData)
 void AgcMeanLuminance::configure(utils::Duration lineDuration,
 				 const CameraSensorHelper *sensorHelper)
 {
-	for (auto &[id, helper] : exposureModeHelpers_)
+	for (auto &[id, helper] : exposureModeHelpers_) {
 		helper.configure(lineDuration, sensorHelper);
+		helper.setFlickerPeriod(flickerPeriod_);
+	}
 
 	luxWarningEnabled_ = true;
 	filteredExposure_ = 0s;
@@ -472,6 +475,11 @@ void AgcMeanLuminance::configure(utils::Duration lineDuration,
  * that each run of the algorithm takes, 0.2 by default. Platforms that run the
  * algorithm on fewer frames than every frame can raise it accordingly.
  *
+ * The optional "flickerPeriod" value, in microseconds, is the period of the
+ * light flicker to avoid: 10000 where the mains run at 50 Hz, 8333 at 60 Hz.
+ * Exposure times longer than it are then kept to whole periods, see
+ * ExposureModeHelper::setFlickerPeriod(). It is 0, off, by default.
+ *
  * \return 0 on success or a negative error code
  */
 int AgcMeanLuminance::parseTuningData(const ValueNode &tuningData)
@@ -479,6 +487,7 @@ int AgcMeanLuminance::parseTuningData(const ValueNode &tuningData)
 	int ret;
 
 	speed_ = std::clamp(tuningData["speed"].get<double>(kDefaultSpeed), 0.01, 1.0);
+	flickerPeriod_ = std::chrono::microseconds(tuningData["flickerPeriod"].get<uint32_t>(0));
 
 	ret = parseRelativeLuminanceTarget(tuningData);
 	if (ret)

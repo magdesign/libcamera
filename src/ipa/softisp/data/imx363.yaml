@@ -111,6 +111,9 @@ algorithms:
   - Agc:
       # The software ISP runs AGC on every fourth frame: 1 - (1 - 0.2)^4
       speed: 0.6
+      # Lamps on the 50 Hz mains flicker every 10 ms: keep longer exposure
+      # times to whole periods, or video shows rolling bands (8333 for 60 Hz).
+      flickerPeriod: 10000
       AeConstraintMode:
         Normal:
           lower:

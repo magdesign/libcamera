@@ -7,6 +7,7 @@
 #include "exposure_mode_helper.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <libcamera/base/log.h>
 
@@ -71,7 +72,7 @@ namespace ipa {
  */
 ExposureModeHelper::ExposureModeHelper(std::span<std::pair<utils::Duration, double>> stages)
 	: lineDuration_(1us), minExposureTime_(0us), maxExposureTime_(0us),
-	  minGain_(0), maxGain_(0), sensorHelper_(nullptr)
+	  minGain_(0), maxGain_(0), flickerPeriod_(0us), sensorHelper_(nullptr)
 {
 	for (const auto &[s, g] : stages) {
 		exposureTimes_.push_back(s);
@@ -125,6 +126,26 @@ void ExposureModeHelper::setLimits(utils::Duration minExposureTime,
 	maxExposureTime_ = maxExposureTime;
 	minGain_ = minGain;
 	maxGain_ = maxGain;
+}
+
+/**
+ * \brief Set the period of the light flicker to avoid
+ * \param[in] flickerPeriod The flicker period, or 0 to not avoid flicker
+ *
+ * Lamps on an AC supply flicker at twice the mains frequency, every 10 ms on
+ * 50 Hz and every 8.33 ms on 60 Hz mains. A rolling shutter exposes each line
+ * at a slightly different time, so unless the exposure time is a whole
+ * multiple of the flicker period, the lines catch different parts of the
+ * flicker: dark and bright bands that roll through video and make the
+ * brightness of the frames pulsate.
+ *
+ * With a flicker period set, splitExposure() shortens exposure times longer
+ * than the period to a whole number of periods and makes up for it with
+ * gain. Shorter exposure times, in bright light, are left alone.
+ */
+void ExposureModeHelper::setFlickerPeriod(utils::Duration flickerPeriod)
+{
+	flickerPeriod_ = flickerPeriod;
 }
 
 utils::Duration ExposureModeHelper::clampExposureTime(utils::Duration exposureTime,
@@ -204,11 +225,38 @@ double ExposureModeHelper::clampGain(double gain, double *quantizationGain) cons
  * digital gain. So to exactly apply the given exposure, both quantization gain
  * and digital gain must be applied.
  *
+ * When a flicker period is set with setFlickerPeriod(), an exposure time
+ * longer than the period is then shortened to a whole number of periods, and
+ * the gain raised to keep the exposure.
+ *
  * \return Tuple of exposure time, analogue gain, quantization gain and digital
  * gain
  */
 ExposureModeHelper::Result
 ExposureModeHelper::splitExposure(utils::Duration exposure) const
+{
+	Result result = splitExposureStages(exposure);
+
+	if (!flickerPeriod_ || minExposureTime_ == maxExposureTime_ ||
+	    result.exposureTime < flickerPeriod_)
+		return result;
+
+	const utils::Duration exposureTime =
+		std::floor(result.exposureTime / flickerPeriod_) * flickerPeriod_;
+	if (exposureTime < minExposureTime_)
+		return result;
+
+	double quantGain;
+	double quantGain2;
+	utils::Duration time = clampExposureTime(exposureTime, &quantGain);
+	double gain = clampGain(exposure / time, &quantGain2);
+	quantGain *= quantGain2;
+
+	return { time, gain, quantGain, exposure / (time * gain * quantGain) };
+}
+
+ExposureModeHelper::Result
+ExposureModeHelper::splitExposureStages(utils::Duration exposure) const
 {
 	ASSERT(maxExposureTime_);
 	ASSERT(maxGain_);
