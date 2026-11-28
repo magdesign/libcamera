@@ -9,6 +9,10 @@ options:
   max_output_height: 1920
 algorithms:
   - BlackLevel:
+  - Demosaic:
+      # Malvar-He-Cutler strength over analogue gain: full detail at low
+      # gain, mostly bilinear at high gain where it would amplify noise.
+      strength: [ 1.0, 1.0, 4.0, 1.0, 12.0, 0.3, 16.0, 0.3 ]
   - Awb:
       colourGains:
         - ct: 2300

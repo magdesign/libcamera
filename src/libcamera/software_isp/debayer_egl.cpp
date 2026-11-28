@@ -111,6 +111,7 @@ int DebayerEGL::getShaderVariableLocations(void)
 	blackLevelUniformDataIn_ = glGetUniformLocation(programId_, "blacklevel");
 	gammaUniformDataIn_ = glGetUniformLocation(programId_, "gamma");
 	contrastExpUniformDataIn_ = glGetUniformLocation(programId_, "contrastExp");
+	demosaicStrengthUniformDataIn_ = glGetUniformLocation(programId_, "demosaic_strength");
 
 	textureUniformStep_ = glGetUniformLocation(programId_, "tex_step");
 	textureUniformSize_ = glGetUniformLocation(programId_, "tex_size");
@@ -127,6 +128,7 @@ int DebayerEGL::getShaderVariableLocations(void)
 			    << " blacklevel " << blackLevelUniformDataIn_
 			    << " gamma " << gammaUniformDataIn_
 			    << " contrastExp " << contrastExpUniformDataIn_
+			    << " demosaic_strength " << demosaicStrengthUniformDataIn_
 			    << " tex_step " << textureUniformStep_
 			    << " tex_size " << textureUniformSize_
 			    << " stride_factor " << textureUniformStrideFactor_
@@ -518,6 +520,12 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
 	 */
 	glUniform1f(contrastExpUniformDataIn_, params.contrastExp);
 	LOG(Debayer, Debug) << " contrastExpUniformDataIn_ " << contrastExpUniformDataIn_ << " data " << params.contrastExp;
+
+	/*
+	 * Demosaicing strength
+	 */
+	glUniform1f(demosaicStrengthUniformDataIn_, params.demosaicStrength);
+	LOG(Debayer, Debug) << " demosaicStrengthUniformDataIn_ " << demosaicStrengthUniformDataIn_ << " data " << params.demosaicStrength;
 
 	return;
 }

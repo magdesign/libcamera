@@ -7,5 +7,6 @@ softisp_ipa_algorithms = files([
     'agc.cpp',
     'blc.cpp',
     'ccm.cpp',
+    'demosaic.cpp',
     'lsc.cpp',
 ])

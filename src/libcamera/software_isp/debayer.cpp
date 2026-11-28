@@ -44,6 +44,13 @@ namespace libcamera {
  */
 
 /**
+ * \var DebayerParams::demosaicStrength
+ * \brief Blend between bilinear (0.0) and Malvar-He-Cutler (1.0) demosaicing
+ *
+ * Only used by the GPU debayering of packed regular Bayer patterns.
+ */
+
+/**
  * \var DebayerParams::kLscGridSize
  * \brief Number of lens shading grid areas in one direction
  */
