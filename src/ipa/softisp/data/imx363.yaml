@@ -118,6 +118,5 @@ algorithms:
             yTarget: 0.8
   - Af:
       scanRange: [ 1000, 4095 ]
-      coarseStep: 220
-      fineStep: 55
+      step: 220
 ...

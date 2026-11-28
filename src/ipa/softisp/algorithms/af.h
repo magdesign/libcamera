@@ -8,7 +8,6 @@
 #include <map>
 #include <optional>
 #include <stdint.h>
-#include <vector>
 
 #include <libcamera/controls.h>
 
@@ -39,26 +38,25 @@ public:
 private:
 	enum class Phase {
 		Idle,
-		Probe,
-		Coarse,
-		Fine,
+		Search,
 		Focused,
+		Wait,
 	};
 
-	void startScan();
-	void startProbe();
-	void probeStep(IPAContext &context, double contrast);
-	void finishScan();
+	void startSearch();
+	void searchStep(IPAContext &context, double contrast);
+	int32_t interpolatePeak() const;
+	void finishSearch(IPAContext &context);
 	void moveTo(IPAContext &context, int32_t position);
 	void monitor(double contrast, double luma);
+	void waitStable(IPAContext &context, double contrast, double luma);
 
 	/* Tuning */
 	Pwl dioptreToPosition_;
 	Pwl positionToDioptre_;
 	int32_t scanMin_;
 	int32_t scanMax_;
-	int32_t coarseStep_;
-	int32_t fineStep_;
+	int32_t step_;
 	double dropRatio_;
 	unsigned int dropFrames_;
 
@@ -72,19 +70,21 @@ private:
 	Phase phase_;
 	int32_t afState_;
 	int32_t position_;
-	int32_t scanPos_;
-	int32_t scanEnd_;
-	int32_t scanStep_;
+	int32_t startPos_;
+	int32_t dir_;
+	bool reversed_;
 	std::map<int32_t, double> scores_;
-	std::vector<int32_t> probePositions_;
-	unsigned int probeIndex_;
 	int32_t bestPos_;
 	double bestScore_;
+	double lowestScore_;
+	unsigned int worseCount_;
 	double focusedScore_;
 	double focusedLuma_;
+	double lastScore_;
+	double lastLuma_;
 	unsigned int dropCount_;
 	unsigned int stableCount_;
-	bool triggered_;
+	bool skip_;
 };
 
 } /* namespace ipa::softisp::algorithms */

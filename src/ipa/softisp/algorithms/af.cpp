@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include <linux/v4l2-controls.h>
 
@@ -22,34 +23,43 @@ namespace ipa::softisp::algorithms {
  * \class Af
  * \brief Contrast detection autofocus
  *
- * The algorithm moves the lens through its range and measures the contrast
- * of the centre of the image at every position, using the sharpness
- * statistic of the software ISP normalised by the luminance. A coarse scan
- * over the configured range is followed by a fine scan around the best
- * coarse position, after which the lens is moved to the sharpest position.
+ * The algorithm measures the contrast of the centre of the image, using the
+ * sharpness statistic of the software ISP normalised by the luminance, and
+ * searches for the lens position that maximises it.
+ *
+ * A search climbs the contrast curve from the current lens position: it
+ * steps the lens in one direction while the contrast rises, turns around if
+ * the first step makes it worse, and stops two steps past the peak. A
+ * parabola through the logarithms of the contrast at the best position and
+ * its two neighbours (a Gaussian through the three values) then places the
+ * lens between the steps. Starting where the lens already is keeps the
+ * search short and avoids sweeping the whole range, which is visible as the
+ * preview going out of focus. When the contrast does not change noticeably
+ * the search keeps walking to the end of the range, and then explores the
+ * other side of the starting position.
  *
  * Each lens position is evaluated on the next statistics frame, which the
  * software ISP produces every kStatPerNumFrames frames. This leaves the lens
  * time to settle.
  *
- * In continuous mode the contrast at the focused position is monitored, and
- * a new scan starts when it drops for a few statistics frames in a row (the
- * subject or the scene has changed).
+ * In continuous mode the contrast at the focused position is monitored. When
+ * it changes by more than the drop ratio for a few statistics frames in a
+ * row, the subject or the scene has changed. The algorithm then waits for
+ * the contrast and luminance to be stable again before it searches, so that
+ * moving the camera does not make the lens hunt.
  *
- * An AfTrigger start while focused first probes the current position and one
- * coarse step on either side. If the current position is the sharpest of the
- * three, focus is confirmed after three statistics frames; otherwise a full
- * scan follows. This keeps the shutter lag short when focus is already good
- * while still catching a subject change the monitoring has not noticed.
+ * An AfTrigger start searches from the current position. When focus is
+ * already good, this takes three statistics frames.
  *
  * Tuning parameters (all optional):
  * - map: piecewise linear function from dioptres to lens driver positions,
  *   used for the LensPosition control and metadata
- * - scanRange: [min, max] lens positions to scan, defaults to the positions
- *   for 0 and 10 dioptres
- * - coarseStep, fineStep: scan steps in lens positions
- * - dropRatio, dropFrames: in continuous mode, rescan when the contrast falls
- *   below dropRatio times the focused contrast for dropFrames statistics
+ * - scanRange: [min, max] lens positions to search, defaults to the
+ *   positions for 0 and 10 dioptres
+ * - step: search step in lens positions
+ * - dropRatio, dropFrames: in continuous mode, refocus when the contrast
+ *   falls below dropRatio times the focused contrast (or rises above it
+ *   divided by dropRatio) for dropFrames statistics
  */
 
 LOG_DEFINE_CATEGORY(IPASoftIspAf)
@@ -58,19 +68,39 @@ namespace {
 
 constexpr double kMaxDioptre = 10.0;
 
-/* A scan whose best contrast is not this much above its worst has failed */
+/* A search whose best contrast is not this much above its worst has failed */
 constexpr double kMinContrastRange = 1.05;
+
+/*
+ * A peak counts once the best contrast is this much above the lowest one
+ * seen. Lower values let measurement noise in the flat, blurred parts of the
+ * contrast curve pass for a peak.
+ */
+constexpr double kPeakRatio = 1.3;
+
+/* Contrast below this fraction of the best counts as past the peak */
+constexpr double kWorseRatio = 0.92;
+
+/* The first step turns around when it lowers the contrast below this */
+constexpr double kFirstStepRatio = 0.9;
+
+/* Relative change of contrast and luminance between stable statistics */
+constexpr double kStableChange = 0.08;
+
+/* Stable statistics in a row needed before refocusing */
+constexpr unsigned int kStableFrames = 2;
 
 } /* namespace */
 
 Af::Af()
-	: scanMin_(0), scanMax_(0), coarseStep_(0), fineStep_(0),
-	  dropRatio_(0.75), dropFrames_(3), hasLens_(false), lensMin_(0),
-	  lensMax_(0), mode_(controls::AfModeContinuous), phase_(Phase::Idle),
-	  afState_(controls::AfStateIdle), position_(0), scanPos_(0),
-	  scanEnd_(0), scanStep_(0), probeIndex_(0), bestPos_(0), bestScore_(0.0),
-	  focusedScore_(0.0), focusedLuma_(0.0), dropCount_(0), stableCount_(0),
-	  triggered_(false)
+	: scanMin_(0), scanMax_(0), step_(0), dropRatio_(0.75), dropFrames_(3),
+	  hasLens_(false), lensMin_(0), lensMax_(0),
+	  mode_(controls::AfModeContinuous), phase_(Phase::Idle),
+	  afState_(controls::AfStateIdle), position_(0), startPos_(0), dir_(1),
+	  reversed_(false), bestPos_(0), bestScore_(0.0), lowestScore_(0.0),
+	  worseCount_(0),
+	  focusedScore_(0.0), focusedLuma_(0.0), lastScore_(0.0), lastLuma_(0.0),
+	  dropCount_(0), stableCount_(0), skip_(false)
 {
 }
 
@@ -91,8 +121,7 @@ int Af::init(IPAContext &context, const ValueNode &tuningData)
 		scanMax_ = (*range)[1];
 	}
 
-	coarseStep_ = tuningData["coarseStep"].get<int32_t>(0);
-	fineStep_ = tuningData["fineStep"].get<int32_t>(0);
+	step_ = tuningData["step"].get<int32_t>(0);
 	dropRatio_ = tuningData["dropRatio"].get<double>(0.75);
 	dropFrames_ = tuningData["dropFrames"].get<uint32_t>(3);
 
@@ -150,10 +179,8 @@ int Af::configure(IPAContext &context,
 	}
 	scanMin_ = std::clamp(scanMin_, lensMin_, lensMax_);
 	scanMax_ = std::clamp(scanMax_, lensMin_, lensMax_);
-	if (coarseStep_ <= 0)
-		coarseStep_ = std::max((scanMax_ - scanMin_) / 12, 1);
-	if (fineStep_ <= 0)
-		fineStep_ = std::max(coarseStep_ / 4, 1);
+	if (step_ <= 0)
+		step_ = std::max((scanMax_ - scanMin_) / 12, 1);
 
 	Pwl::Interval dioptres = dioptreToPosition_.domain();
 	context.ctrlMap[&controls::AfMode] =
@@ -166,75 +193,33 @@ int Af::configure(IPAContext &context,
 			    static_cast<float>(positionToDioptre_.eval(scanMin_)));
 
 	mode_ = controls::AfModeContinuous;
-	position_ = scanMin_;
-	context.activeState.lens.position = position_;
-	startScan();
+	moveTo(context, scanMin_);
+	startSearch();
+	/* The lens is only moved once streaming starts. */
+	skip_ = true;
 
 	LOG(IPASoftIspAf, Debug)
 		<< "Lens " << lensMin_ << "-" << lensMax_ << ", scan "
-		<< scanMin_ << "-" << scanMax_ << " steps " << coarseStep_
-		<< "/" << fineStep_;
+		<< scanMin_ << "-" << scanMax_ << " step " << step_;
 
 	return 0;
 }
 
-void Af::startScan()
+void Af::startSearch()
 {
-	phase_ = Phase::Coarse;
+	phase_ = Phase::Search;
 	afState_ = controls::AfStateScanning;
-	scanPos_ = scanMin_;
-	scanEnd_ = scanMax_;
-	scanStep_ = coarseStep_;
+	startPos_ = position_;
+	dir_ = position_ + step_ <= scanMax_ ? 1 : -1;
+	reversed_ = false;
 	scores_.clear();
 	bestScore_ = 0.0;
-	bestPos_ = scanMin_;
+	lowestScore_ = 0.0;
+	bestPos_ = position_;
+	worseCount_ = 0;
 	dropCount_ = 0;
 	stableCount_ = 0;
-	/* The first statistics after a scan starts predate the lens move. */
-	triggered_ = true;
-}
-
-void Af::startProbe()
-{
-	phase_ = Phase::Probe;
-	afState_ = controls::AfStateScanning;
-	probePositions_ = { position_,
-			    std::max(position_ - coarseStep_, scanMin_),
-			    std::min(position_ + coarseStep_, scanMax_) };
-	probeIndex_ = 0;
-	scores_.clear();
-	triggered_ = true;
-}
-
-void Af::probeStep(IPAContext &context, double contrast)
-{
-	scores_[position_] = contrast;
-
-	if (++probeIndex_ < probePositions_.size()) {
-		moveTo(context, probePositions_[probeIndex_]);
-		return;
-	}
-
-	const int32_t centre = probePositions_[0];
-	const double centreScore = scores_[centre];
-	bool sharpest = true;
-	for (const auto &[pos, score] : scores_)
-		sharpest &= score <= centreScore;
-
-	if (sharpest) {
-		LOG(IPASoftIspAf, Debug)
-			<< "Probe confirms focus at " << centre;
-		phase_ = Phase::Focused;
-		afState_ = controls::AfStateFocused;
-		focusedScore_ = 0.0;
-		dropCount_ = 0;
-		moveTo(context, centre);
-		return;
-	}
-
-	LOG(IPASoftIspAf, Debug) << "Probe found better focus nearby, rescanning";
-	startScan();
-	moveTo(context, scanPos_);
+	skip_ = false;
 }
 
 void Af::moveTo(IPAContext &context, int32_t position)
@@ -255,8 +240,7 @@ void Af::queueRequest(IPAContext &context,
 	if (mode && *mode != mode_) {
 		mode_ = *mode;
 		if (mode_ == controls::AfModeContinuous) {
-			startScan();
-			moveTo(context, scanPos_);
+			startSearch();
 		} else {
 			phase_ = Phase::Idle;
 			afState_ = controls::AfStateIdle;
@@ -265,15 +249,9 @@ void Af::queueRequest(IPAContext &context,
 
 	const auto &trigger = controls.get(controls::AfTrigger);
 	if (trigger && mode_ != controls::AfModeManual) {
-		if (*trigger == controls::AfTriggerStart) {
-			if (phase_ == Phase::Focused) {
-				startProbe();
-			} else if (phase_ != Phase::Coarse && phase_ != Phase::Fine &&
-				   phase_ != Phase::Probe) {
-				startScan();
-				moveTo(context, scanPos_);
-			}
-			/* A scan already in progress completes the trigger. */
+		/* A search already in progress completes the trigger. */
+		if (*trigger == controls::AfTriggerStart && phase_ != Phase::Search) {
+			startSearch();
 		} else if (*trigger == controls::AfTriggerCancel) {
 			phase_ = Phase::Idle;
 			afState_ = controls::AfStateIdle;
@@ -285,22 +263,100 @@ void Af::queueRequest(IPAContext &context,
 		moveTo(context, std::lround(dioptreToPosition_.eval(*lensPosition)));
 }
 
-void Af::finishScan()
+/*
+ * Place the lens on the peak of a Gaussian through the best position and its
+ * two neighbours, the classic three point peak interpolation of contrast
+ * autofocus. Without both neighbours, the best position is used as is.
+ */
+int32_t Af::interpolatePeak() const
 {
-	double worst = bestScore_;
-	for (const auto &[pos, score] : scores_)
-		worst = std::min(worst, score);
+	auto lower = scores_.find(bestPos_ - step_);
+	auto upper = scores_.find(bestPos_ + step_);
+	if (lower == scores_.end() || upper == scores_.end() ||
+	    lower->second <= 0.0 || upper->second <= 0.0)
+		return bestPos_;
 
+	double lm = std::log(lower->second);
+	double lb = std::log(bestScore_);
+	double lp = std::log(upper->second);
+	double denom = lm - 2.0 * lb + lp;
+	if (denom >= 0.0)
+		return bestPos_;
+
+	double offset = 0.5 * (lm - lp) / denom;
+	offset = std::clamp(offset, -0.5, 0.5);
+
+	return bestPos_ + std::lround(offset * step_);
+}
+
+void Af::finishSearch(IPAContext &context)
+{
+	double worst = lowestScore_;
 	bool ok = worst > 0.0 && bestScore_ / worst >= kMinContrastRange;
+	int32_t target = ok ? interpolatePeak() : bestPos_;
+
 	afState_ = ok ? controls::AfStateFocused : controls::AfStateFailed;
 	phase_ = Phase::Focused;
 	focusedScore_ = 0.0;
 	dropCount_ = 0;
 
 	LOG(IPASoftIspAf, Debug)
-		<< "Scan done: best position " << bestPos_ << " contrast "
-		<< bestScore_ << " (worst " << worst << ")"
-		<< (ok ? "" : ", no clear peak");
+		<< "Search done after " << scores_.size() << " positions: best "
+		<< bestPos_ << " contrast " << bestScore_ << " (worst " << worst
+		<< "), lens to " << target << (ok ? "" : ", no clear peak");
+
+	moveTo(context, target);
+}
+
+void Af::searchStep(IPAContext &context, double contrast)
+{
+	scores_[position_] = contrast;
+	lowestScore_ = scores_.size() == 1 ? contrast
+					   : std::min(lowestScore_, contrast);
+
+	if (contrast > bestScore_) {
+		bestScore_ = contrast;
+		bestPos_ = position_;
+		worseCount_ = 0;
+	}
+
+	bool peak = bestScore_ >= kPeakRatio * lowestScore_;
+	if (peak && contrast < kWorseRatio * bestScore_)
+		worseCount_++;
+
+	/* Two positions past a clear peak: done. */
+	if (worseCount_ >= 2) {
+		finishSearch(context);
+		return;
+	}
+
+	int32_t next = position_ + dir_ * step_;
+	bool atEnd = next < scanMin_ || next > scanMax_;
+
+	/*
+	 * Turn around when the first step away from the start clearly lowers
+	 * the contrast, or when the end of the range is reached without having
+	 * climbed to a peak.
+	 */
+	bool firstStepWorse = scores_.size() == 2 && bestPos_ == startPos_ &&
+			      contrast < kFirstStepRatio * bestScore_;
+	bool climbed = peak && bestPos_ != startPos_;
+
+	if (!reversed_ && (firstStepWorse || (atEnd && !climbed))) {
+		dir_ = -dir_;
+		reversed_ = true;
+		if (!firstStepWorse)
+			worseCount_ = 0;
+		next = startPos_ + dir_ * step_;
+		atEnd = next < scanMin_ || next > scanMax_;
+	}
+
+	if (atEnd) {
+		finishSearch(context);
+		return;
+	}
+
+	moveTo(context, next);
 }
 
 void Af::monitor(double contrast, double luma)
@@ -312,18 +368,41 @@ void Af::monitor(double contrast, double luma)
 		return;
 	}
 
+	double ratio = contrast / focusedScore_;
 	double lumaChange = std::abs(luma / focusedLuma_ - 1.0);
-	if (contrast < dropRatio_ * focusedScore_ || lumaChange > 0.5)
+	if (ratio < dropRatio_ || ratio > 1.0 / dropRatio_ || lumaChange > 0.5)
 		dropCount_++;
 	else
 		dropCount_ = 0;
 
-	if (dropCount_ >= dropFrames_) {
-		LOG(IPASoftIspAf, Debug)
-			<< "Contrast dropped from " << focusedScore_ << " to "
-			<< contrast << ", rescanning";
-		startScan();
-	}
+	if (dropCount_ < dropFrames_)
+		return;
+
+	LOG(IPASoftIspAf, Debug)
+		<< "Contrast changed from " << focusedScore_ << " to "
+		<< contrast << ", waiting for a stable scene";
+
+	phase_ = Phase::Wait;
+	afState_ = controls::AfStateScanning;
+	stableCount_ = 0;
+	lastScore_ = contrast;
+	lastLuma_ = luma;
+}
+
+void Af::waitStable(IPAContext &context, double contrast, double luma)
+{
+	bool stable = std::abs(contrast / lastScore_ - 1.0) < kStableChange &&
+		      std::abs(luma / lastLuma_ - 1.0) < kStableChange;
+	stableCount_ = stable ? stableCount_ + 1 : 0;
+	lastScore_ = contrast;
+	lastLuma_ = luma;
+
+	if (stableCount_ < kStableFrames)
+		return;
+
+	/* These statistics are the first sample of the search. */
+	startSearch();
+	searchStep(context, contrast);
 }
 
 void Af::process(IPAContext &context,
@@ -350,61 +429,23 @@ void Af::process(IPAContext &context,
 		return;
 
 	case Phase::Focused:
-		if (mode_ == controls::AfModeContinuous) {
+		if (mode_ == controls::AfModeContinuous)
 			monitor(contrast, luma);
-			if (phase_ == Phase::Coarse)
-				moveTo(context, scanPos_);
-		}
 		return;
 
-	case Phase::Probe:
-		if (triggered_) {
-			/* The first statistics predate the trigger. */
-			triggered_ = false;
+	case Phase::Wait:
+		waitStable(context, contrast, luma);
+		return;
+
+	case Phase::Search:
+		/* The first statistics after a move outside process() predate it. */
+		if (skip_) {
+			skip_ = false;
 			return;
 		}
-		probeStep(context, contrast);
-		return;
-
-	case Phase::Coarse:
-	case Phase::Fine:
-		break;
-	}
-
-	if (triggered_) {
-		triggered_ = false;
-		moveTo(context, scanPos_);
+		searchStep(context, contrast);
 		return;
 	}
-
-	scores_[position_] = contrast;
-	if (contrast > bestScore_) {
-		bestScore_ = contrast;
-		bestPos_ = position_;
-	}
-
-	/* Stop the coarse scan early once well past a clear peak. */
-	bool pastPeak = phase_ == Phase::Coarse &&
-			position_ >= bestPos_ + 2 * scanStep_ &&
-			contrast < 0.6 * bestScore_;
-
-	scanPos_ += scanStep_;
-	if (scanPos_ <= scanEnd_ && !pastPeak) {
-		moveTo(context, scanPos_);
-		return;
-	}
-
-	if (phase_ == Phase::Coarse) {
-		phase_ = Phase::Fine;
-		scanPos_ = std::max(bestPos_ - coarseStep_ + fineStep_, scanMin_);
-		scanEnd_ = std::min(bestPos_ + coarseStep_ - fineStep_, scanMax_);
-		scanStep_ = fineStep_;
-		moveTo(context, scanPos_);
-		return;
-	}
-
-	finishScan();
-	moveTo(context, bestPos_);
 }
 
 REGISTER_IPA_ALGORITHM(Af, "Af")
