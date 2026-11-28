@@ -191,6 +191,7 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
 	uint64_t nSamples = 0;            \
                                           \
 	uint64_t yPrev1 = 0, yPrev2 = 0;  \
+	uint64_t yPrev3 = 0, yPrev4 = 0;  \
 	unsigned int sample = 0;          \
 	uint64_t sharpness = 0;           \
 	uint64_t sharpnessLuma = 0;
@@ -211,10 +212,14 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
 	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++; \
                                                 \
 	if (afRow_ && sample >= afSampleStart_ && sample < afSampleEnd_) { \
-		if (sample >= afSampleStart_ + 2) \
+		if (sample >= afSampleStart_ + 4) {   \
 			sharpness += utils::abs_diff(yVal + yPrev2, 2 * yPrev1); \
+			sharpness += utils::abs_diff(yVal + yPrev4, 2 * yPrev2); \
+		}                               \
 		sharpnessLuma += yVal;          \
 	}                                       \
+	yPrev4 = yPrev3;                        \
+	yPrev3 = yPrev2;                        \
 	yPrev2 = yPrev1;                        \
 	yPrev1 = yVal;                          \
 	sample++;

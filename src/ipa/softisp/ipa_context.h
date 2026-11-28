@@ -63,6 +63,11 @@ struct IPAActiveState {
 		/* Lens position requested by the algorithms, in driver units */
 		std::optional<int32_t> position;
 	} lens;
+
+	struct {
+		/* Exposure held while autofocus compares contrast */
+		bool locked;
+	} af;
 };
 
 struct IPAFrameContext : public FrameContext {

@@ -58,7 +58,8 @@ struct SwIspStats {
 	Histogram yHistogram;
 	/**
 	 * \brief Sum of the absolute horizontal second derivatives of the
-	 * luminance over the centre half of the window
+	 * luminance over the centre half of the window, at a spacing of one and
+	 * of two samples
 	 *
 	 * This is a contrast measure for autofocus. Divide it by
 	 * \a sharpnessLuma to make it independent of the exposure.

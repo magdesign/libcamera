@@ -94,6 +94,7 @@ private:
 	unsigned int abortsLeft_;
 	unsigned int dropCount_;
 	unsigned int waitCount_;
+	bool locked_;
 	bool skip_;
 };
 

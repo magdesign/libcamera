@@ -83,7 +83,8 @@ void Agc::process(IPAContext &context,
 		  const SwIspStats *stats,
 		  ControlList &metadata)
 {
-	if (stats->valid) {
+	/* Autofocus compares contrast, which includes noise, at one gain. */
+	if (stats->valid && !context.activeState.af.locked) {
 		/* \todo The histogram should come already adjusted. */
 		auto histogram = stats->yHistogram;
 

@@ -12,6 +12,7 @@
 #include <linux/v4l2-controls.h>
 
 #include <libcamera/base/log.h>
+#include <libcamera/base/utils.h>
 
 #include <libcamera/control_ids.h>
 
@@ -73,8 +74,12 @@ namespace {
 
 constexpr double kMaxDioptre = 10.0;
 
-/* A search whose best contrast is not this much above its worst has failed */
-constexpr double kMinContrastRange = 1.05;
+/*
+ * A search whose best contrast is not this much above its worst has failed.
+ * In dim light, noise makes up most of the contrast measure: a subject at
+ * mid distance in a dim room peaked only 3% to 6% above it.
+ */
+constexpr double kMinContrastRange = 1.03;
 
 /*
  * A peak counts once the best contrast is this much above the lowest one
@@ -126,7 +131,7 @@ Af::Af()
 	  worseCount_(0),
 	  focusedScore_(0.0), focusedLuma_(0.0), lastScore_(0.0), exposure_(0.0),
 	  searchExposure_(0.0), lastExposure_(0.0), abortsLeft_(kMaxAborts),
-	  dropCount_(0), waitCount_(0), skip_(false)
+	  dropCount_(0), waitCount_(0), locked_(false), skip_(false)
 {
 }
 
@@ -222,11 +227,15 @@ int Af::configure(IPAContext &context,
 			    static_cast<float>(dioptres.end),
 			    static_cast<float>(positionToDioptre_.eval(scanMin_)));
 
+	/*
+	 * Start at the default position and search once the exposure has
+	 * settled, as for any change of scene. The lens is only moved once
+	 * streaming starts.
+	 */
 	mode_ = controls::AfModeContinuous;
-	moveTo(context, scanMin_);
-	startSearch();
-	/* The lens is only moved once streaming starts. */
-	skip_ = true;
+	moveTo(context, defaultPos_);
+	abortsLeft_ = kMaxAborts;
+	wait(0.0);
 
 	LOG(IPASoftIspAf, Debug)
 		<< "Lens " << lensMin_ << "-" << lensMax_ << ", scan "
@@ -237,6 +246,11 @@ int Af::configure(IPAContext &context,
 
 void Af::startSearch()
 {
+	/*
+	 * Hold the exposure while searching: the contrast measure includes
+	 * the noise, which changes with the gain.
+	 */
+	locked_ = true;
 	phase_ = Phase::Search;
 	afState_ = controls::AfStateScanning;
 	startPos_ = position_;
@@ -277,6 +291,7 @@ void Af::queueRequest(IPAContext &context,
 		} else {
 			phase_ = Phase::Idle;
 			afState_ = controls::AfStateIdle;
+			locked_ = false;
 		}
 	}
 
@@ -288,6 +303,7 @@ void Af::queueRequest(IPAContext &context,
 		} else if (*trigger == controls::AfTriggerCancel) {
 			phase_ = Phase::Idle;
 			afState_ = controls::AfStateIdle;
+			locked_ = false;
 		}
 	}
 
@@ -352,6 +368,7 @@ void Af::finishSearch(IPAContext &context)
 
 	afState_ = ok ? controls::AfStateFocused : controls::AfStateFailed;
 	phase_ = Phase::Focused;
+	locked_ = false;
 	abortsLeft_ = kMaxAborts;
 	focusedScore_ = 0.0;
 	dropCount_ = 0;
@@ -467,6 +484,7 @@ void Af::monitor(double contrast, double luma)
 
 void Af::wait(double contrast)
 {
+	locked_ = false;
 	phase_ = Phase::Wait;
 	afState_ = controls::AfStateScanning;
 	waitCount_ = 0;
@@ -498,6 +516,9 @@ void Af::process(IPAContext &context,
 	if (!hasLens_)
 		return;
 
+	/* The AGC runs first and follows the lock from the previous frame. */
+	utils::scope_exit publishLock{ [&] { context.activeState.af.locked = locked_; } };
+
 	metadata.set(controls::AfState, afState_);
 	metadata.set(controls::LensPosition,
 		     static_cast<float>(positionToDioptre_.eval(position_)));
@@ -508,6 +529,9 @@ void Af::process(IPAContext &context,
 	double contrast = static_cast<double>(stats->sharpness) / stats->sharpnessLuma;
 	double luma = static_cast<double>(stats->sharpnessLuma);
 	exposure_ = frameContext.sensor.exposure * frameContext.sensor.gain;
+	/* The search started at configure() has no exposure to refer to. */
+	if (searchExposure_ == 0.0)
+		searchExposure_ = exposure_;
 
 	switch (phase_) {
 	case Phase::Idle:
