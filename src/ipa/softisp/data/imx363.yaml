@@ -119,4 +119,6 @@ algorithms:
   - Af:
       scanRange: [ 1000, 4095 ]
       step: 220
+      # infinity focus, measured on a distant scene
+      defaultPosition: 1650
 ...

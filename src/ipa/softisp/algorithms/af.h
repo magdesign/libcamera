@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <stdint.h>
+#include <vector>
 
 #include <libcamera/controls.h>
 
@@ -45,17 +46,20 @@ private:
 
 	void startSearch();
 	void searchStep(IPAContext &context, double contrast);
+	void refineStep(IPAContext &context, double contrast);
+	void record(double contrast);
 	int32_t interpolatePeak() const;
 	void finishSearch(IPAContext &context);
 	void moveTo(IPAContext &context, int32_t position);
 	void monitor(double contrast, double luma);
-	void waitStable(IPAContext &context, double contrast, double luma);
+	void waitStable(IPAContext &context, double contrast);
 
 	/* Tuning */
 	Pwl dioptreToPosition_;
 	Pwl positionToDioptre_;
 	int32_t scanMin_;
 	int32_t scanMax_;
+	int32_t defaultPos_;
 	int32_t step_;
 	double dropRatio_;
 	unsigned int dropFrames_;
@@ -74,6 +78,8 @@ private:
 	int32_t dir_;
 	bool reversed_;
 	std::map<int32_t, double> scores_;
+	std::vector<int32_t> refine_;
+	bool refining_;
 	int32_t bestPos_;
 	double bestScore_;
 	double lowestScore_;
@@ -81,9 +87,8 @@ private:
 	double focusedScore_;
 	double focusedLuma_;
 	double lastScore_;
-	double lastLuma_;
 	unsigned int dropCount_;
-	unsigned int stableCount_;
+	unsigned int waitCount_;
 	bool skip_;
 };
 
