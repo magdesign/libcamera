@@ -631,7 +631,8 @@ double AgcMeanLuminance::effectiveYTarget(double lux, double exposureCompensatio
  *
  * The speed of the filter is adaptive, and will produce the target quicker
  * during startup, or when the target exposure is within 20% of the most recent
- * filter output.
+ * filter output. A target below half the most recent filter output is used
+ * directly.
  *
  * \return The filtered exposure
  */
@@ -651,6 +652,16 @@ utils::Duration AgcMeanLuminance::filterExposure(utils::Duration exposureValue)
 	if (filteredExposure_ < 1.2 * exposureValue &&
 	    filteredExposure_ > 0.8 * exposureValue)
 		speed = sqrt(speed);
+
+	/*
+	 * Correct strong overexposure without filtering. Clipped highlights
+	 * hide how bright the scene really is, so the target is a cautious
+	 * estimate already, and a picture that stays washed out for seconds
+	 * is worse than a step in brightness. This matters most where the
+	 * statistics, and so this filter, only run every few frames.
+	 */
+	if (exposureValue < 0.5 * filteredExposure_)
+		speed = 1.0;
 
 	filteredExposure_ = speed * exposureValue +
 			    filteredExposure_ * (1.0 - speed);
