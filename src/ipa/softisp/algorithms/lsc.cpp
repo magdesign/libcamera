@@ -5,6 +5,9 @@
 
 #include "lsc.h"
 
+#include <algorithm>
+#include <array>
+
 #include <libcamera/base/log.h>
 
 namespace libcamera {
@@ -41,7 +44,7 @@ int Lsc::configure(IPAContext &context,
 				  gridPos_, gridPos_);
 }
 
-void Lsc::prepare([[maybe_unused]] IPAContext &context,
+void Lsc::prepare(IPAContext &context,
 		  [[maybe_unused]] const uint32_t frame,
 		  IPAFrameContext &frameContext,
 		  DebayerParams *params)
@@ -50,6 +53,7 @@ void Lsc::prepare([[maybe_unused]] IPAContext &context,
 	constexpr unsigned int minTemperatureChange = 100;
 
 	if (!frameContext.lsc.enabled) {
+		context.activeState.lscGains = RGB<double>{ { 1.0, 1.0, 1.0 } };
 		if (lastAppliedCt_ != 0) {
 			params->lscLut = DebayerParams::identityLscLut;
 			params->lscLutVersion++;
@@ -60,6 +64,8 @@ void Lsc::prepare([[maybe_unused]] IPAContext &context,
 		}
 		return;
 	}
+
+	context.activeState.lscGains = meanGains_;
 
 	if (utils::abs_diff(ct, lastAppliedCt_) < minTemperatureChange)
 		return;
@@ -80,11 +86,50 @@ void Lsc::prepare([[maybe_unused]] IPAContext &context,
 	}
 	params->lscLutVersion++;
 
+	meanGains_ = meanGains(red, green, blue);
+	context.activeState.lscGains = meanGains_;
+
 	LOG(IPASoftIspLsc, Debug)
 		<< "LSC updated to version " << params->lscLutVersion
-		<< " and temperature " << ct << " (was " << lastAppliedCt_ << ")";
+		<< " and temperature " << ct << " (was " << lastAppliedCt_
+		<< "), mean gains " << meanGains_;
 
 	lastAppliedCt_ = ct;
+}
+
+/*
+ * The mean gain the tables apply to each colour, relative to green. A uniform
+ * grey surface reaches the sensor as 1 / gain of the image centre at each
+ * position, so the statistics, which are gathered before the correction, see
+ * the mean of 1 / gain: the harmonic mean of the gains, with the grid points
+ * weighted by the image area they cover, converts them to corrected values.
+ */
+template<typename T>
+RGB<double> Lsc::meanGains(const T &red, const T &green, const T &blue)
+{
+	constexpr unsigned int gridSize = DebayerParams::kLscGridSize;
+	const std::array<const T *, 3> tables = { &red, &green, &blue };
+	RGB<double> gains;
+
+	for (unsigned int c = 0; c < 3; c++) {
+		double area = 0.0;
+		double inverse = 0.0;
+
+		for (unsigned int y = 0; y < gridSize; y++) {
+			for (unsigned int x = 0; x < gridSize; x++) {
+				double weight = (x == 0 || x == gridSize - 1 ? 0.5 : 1.0) *
+						(y == 0 || y == gridSize - 1 ? 0.5 : 1.0);
+				double value = static_cast<double>((*tables[c])[y * gridSize + x]);
+
+				area += weight;
+				inverse += weight / std::max(value, 1.0);
+			}
+		}
+
+		gains[c] = area / inverse;
+	}
+
+	return gains / gains.g();
 }
 
 void Lsc::queueRequest(IPAContext &context, [[maybe_unused]] const uint32_t frame,

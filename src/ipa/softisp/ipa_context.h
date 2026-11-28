@@ -59,6 +59,12 @@ struct IPAActiveState {
 
 	ipa::lsc::ActiveState lsc;
 
+	/*
+	 * Mean gain of the lens shading correction per colour, relative to
+	 * green. The statistics are gathered before the correction.
+	 */
+	RGB<double> lscGains{ { 1.0, 1.0, 1.0 } };
+
 	struct {
 		/* Lens position requested by the algorithms, in driver units */
 		std::optional<int32_t> position;

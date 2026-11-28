@@ -39,11 +39,15 @@ public:
 		     ControlList &metadata) override;
 
 private:
+	template<typename T>
+	static RGB<double> meanGains(const T &red, const T &green, const T &blue);
+
 	LscAlgorithm<UQ<2, 6>> lscAlgo_;
 
 	std::vector<double> gridPos_;
 
 	unsigned int lastAppliedCt_ = 0;
+	RGB<double> meanGains_{ { 1.0, 1.0, 1.0 } };
 };
 
 } /* namespace ipa::softisp::algorithms */

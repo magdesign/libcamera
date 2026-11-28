@@ -147,6 +147,13 @@ SoftIspAwbStats Awb::calculateRgbMeans(IPAContext &context,
 				   static_cast<double>(sum.g()) / nPixels,
 				   static_cast<double>(sum.b()) / nPixels } };
 
+	/*
+	 * The statistics are gathered before the lens shading correction,
+	 * which raises red more than green and blue towards the edges. Balance
+	 * the corrected image, not the shaded one.
+	 */
+	rgbMeans *= context.activeState.lscGains;
+
 	return SoftIspAwbStats(rgbMeans);
 }
 
