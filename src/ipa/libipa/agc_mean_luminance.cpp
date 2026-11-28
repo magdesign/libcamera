@@ -40,6 +40,12 @@ namespace ipa {
 static constexpr uint32_t kNumStartupFrames = 10;
 
 /*
+ * Default fraction of the way to the new exposure value that each run of the
+ * algorithm takes
+ */
+static constexpr double kDefaultSpeed = 0.2;
+
+/*
  * Default relative luminance target
  *
  * This value should be chosen so that when the camera points at a grey target,
@@ -178,7 +184,8 @@ static constexpr unsigned int kDefaultLuxLevel = 500;
  */
 
 AgcMeanLuminance::AgcMeanLuminance()
-	: filteredExposure_(0s), luxWarningEnabled_(true), frameCount_(0)
+	: filteredExposure_(0s), speed_(kDefaultSpeed), luxWarningEnabled_(true),
+	  frameCount_(0)
 {
 }
 
@@ -461,11 +468,17 @@ void AgcMeanLuminance::configure(utils::Duration lineDuration,
  *
  * \endcode
  *
+ * The optional "speed" value sets the fraction of the way to the new exposure
+ * that each run of the algorithm takes, 0.2 by default. Platforms that run the
+ * algorithm on fewer frames than every frame can raise it accordingly.
+ *
  * \return 0 on success or a negative error code
  */
 int AgcMeanLuminance::parseTuningData(const ValueNode &tuningData)
 {
 	int ret;
+
+	speed_ = std::clamp(tuningData["speed"].get<double>(kDefaultSpeed), 0.01, 1.0);
 
 	ret = parseRelativeLuminanceTarget(tuningData);
 	if (ret)
@@ -629,8 +642,8 @@ double AgcMeanLuminance::effectiveYTarget(double lux, double exposureCompensatio
  * \brief Apply a filter on the exposure value to limit the speed of changes
  * \param[in] exposureValue The target exposure from the AGC algorithm
  *
- * The speed of the filter is adaptive, and will produce the target quicker
- * during startup, or when the target exposure is within 20% of the most recent
+ * The speed of the filter is set by the tuning data and adaptive: it will
+ * produce the target quicker during startup, or when the target exposure is within 20% of the most recent
  * filter output. A target below half the most recent filter output is used
  * directly.
  *
@@ -638,7 +651,7 @@ double AgcMeanLuminance::effectiveYTarget(double lux, double exposureCompensatio
  */
 utils::Duration AgcMeanLuminance::filterExposure(utils::Duration exposureValue)
 {
-	double speed = 0.2;
+	double speed = speed_;
 
 	/* Adapt instantly if we are in startup phase. */
 	if (frameCount_ < kNumStartupFrames)

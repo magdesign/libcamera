@@ -89,6 +89,7 @@ private:
 	utils::Duration filterExposure(utils::Duration exposureValue);
 
 	utils::Duration filteredExposure_;
+	double speed_;
 	mutable bool luxWarningEnabled_;
 	Pwl relativeLuminanceTarget_;
 	uint64_t frameCount_;
